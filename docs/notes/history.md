@@ -79,3 +79,5 @@ Redact) already applied (`annotate::bake_destructive`). The flattened file and t
 base therefore both lack whatever a redaction hid; only the vector shapes stay editable.
 Covered by `annotate::tests::sidecar_base_has_redactions_baked_in`. Sidecars written by older
 builds still hold the unredacted base until the item is edited and saved again or deleted.
+Since Nov 19 2026 shapes under a redaction (pasted pictures, pointer, text) are flattened into
+the stored base too (`annotate::stored_form`), so the sidecar JSON no longer holds them.

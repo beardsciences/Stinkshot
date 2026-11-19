@@ -223,7 +223,8 @@ restored to DWORD 0 right away and the test script fixed; the real instance kept
 
 ## Release prep for 0.1.0 (Nov 8 2026, evening)
 
-Publish steps for tonight: `docs/RELEASE.md` (PowerShell 5.1, copy-paste).
+Publish steps for tonight: `docs/RELEASE.md` (PowerShell 5.1, copy-paste). That file was
+folded into `docs/RELEASING.md` on Nov 19 2026.
 
 ### Repository owner does not exist
 

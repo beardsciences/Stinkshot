@@ -1,5 +1,8 @@
 # Stinkshot brief
 
+> This is the original planning brief from Nov 6 2026, kept for history. It is not kept up to
+> date: for the current state see `README.md`, `docs/ARCHITECTURE.md` and `CHANGELOG.md`.
+
 A modern, local-first screenshot and screen-recording tool for Windows. Replaces Greenshot
 (feels legacy: dated look, clunky editor, too many clicks, bad mixed-DPI behavior) and
 Flameshot (missing features below).

@@ -163,6 +163,8 @@ try {
 
     # Config: nothing global (PrintScreen, hotkeys, clipboard, Run value), no popups, history
     # in the work folder. serde fills every other field with its default.
+    # The folder is a TOML basic string with doubled backslashes, so a path with an apostrophe
+    # (a user name like O'Brien) still parses.
     New-Item -ItemType Directory -Force -Path $ConfigDir | Out-Null
     $toml = @"
 [general]
@@ -187,7 +189,7 @@ record_gif = ""
 open_editor_after_capture = false
 
 [history]
-folder = '$Captures'
+folder = "$($Captures.Replace('\', '\\'))"
 
 [privacy]
 check_for_updates = false

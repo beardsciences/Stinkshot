@@ -1,7 +1,7 @@
-# Draft.
+# Template. scripts/release.ps1 fills {{VERSION}} (docs/RELEASING.md).
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.28.0.schema.json
 PackageIdentifier: Stinkshot.Stinkshot
-PackageVersion: 0.1.0
+PackageVersion: {{VERSION}}
 PackageLocale: en-US
 Publisher: Stinkshot contributors
 PublisherUrl: https://stinkshot.com/
@@ -25,6 +25,6 @@ Tags:
   - gif
   - privacy
   - open-source
-ReleaseNotesUrl: https://code.mccullough.dev/christian/stinkshot/releases/tag/v0.1.0
+ReleaseNotesUrl: https://code.mccullough.dev/christian/stinkshot/releases/tag/v{{VERSION}}
 ManifestType: defaultLocale
 ManifestVersion: 1.28.0

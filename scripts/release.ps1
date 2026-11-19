@@ -21,11 +21,16 @@ Code signing is optional (-Sign none is the default and produces unsigned artifa
   -Sign signpath  -SignPathOrganizationId ... -SignPathProjectSlug ... -SignPathPolicySlug ...
                   (API token in SIGNPATH_API_TOKEN; needs the SignPath PowerShell module)
 
-.EXAMPLE
-powershell -ExecutionPolicy Bypass -File scripts\release.ps1
+-AllowDirty is for dry runs only. It builds from a tree with changes and lets an unfinished
+changelog through, so the result is never a release: the output folder gets a -dirty suffix,
+nothing is signed (no minisign, no code signing), and publish-forgejo.ps1 and the site's
+update-site.ps1 refuse the folder.
 
 .EXAMPLE
-pwsh scripts\release.ps1 -TargetDir C:\dev\stinkshot-bench\target-release -OutDir C:\dev\stinkshot-bench\dist -AllowDirty
+powershell -ExecutionPolicy Bypass -File scripts/release.ps1
+
+.EXAMPLE
+powershell -ExecutionPolicy Bypass -File scripts/release.ps1 -TargetDir C:/dev/stinkshot-bench/target-dryrun -OutDir C:/dev/stinkshot-bench/dist/dryrun -AllowDirty
 #>
 [CmdletBinding()]
 param(
@@ -82,6 +87,15 @@ function Invoke-Native {
     $ErrorActionPreference = 'Continue'
     & $Exe @Arguments 2>&1 | ForEach-Object { if ($_ -is [System.Management.Automation.ErrorRecord]) { Write-Host $_.Exception.Message } else { $_ } }
     if ($LASTEXITCODE -ne 0) { Fail "$([IO.Path]::GetFileName($Exe)) $($Arguments -join ' ') exited with $LASTEXITCODE" }
+}
+
+# Runs a native tool and returns its stdout lines; fails on a non-zero exit code.
+function Get-NativeOutput {
+    param([string]$Exe, [string[]]$Arguments)
+    $ErrorActionPreference = 'Continue'
+    $out = @(& $Exe @Arguments)
+    if ($LASTEXITCODE -ne 0) { Fail "$Exe $($Arguments -join ' ') exited with $LASTEXITCODE" }
+    return $out
 }
 
 function Find-Tool {
@@ -169,13 +183,21 @@ try {
     if (-not $TargetDir) { $TargetDir = Join-Path $Repo 'target-dist' }
     if (-not $OutDir) { $OutDir = Join-Path $Repo "dist\$Version" }
     $TargetDir = [IO.Path]::GetFullPath($TargetDir).TrimEnd('\')
+    $OutDir = [IO.Path]::GetFullPath($OutDir).TrimEnd('\')
     if ($TargetDir -ieq (Join-Path $Repo 'target')) {
         Fail "-TargetDir must not be the repo's target folder (a running stinkshot.exe may live there)."
     }
+    # A dry run is never a release: its own folder, and nothing in it is signed.
+    if ($AllowDirty) {
+        if ($OutDir -notmatch '-dirty$') { $OutDir = "$OutDir-dirty" }
+        if ($Sign -ne 'none') { Fail "-AllowDirty builds are never signed. Drop -Sign $Sign or -AllowDirty." }
+    }
 
-    $dirty = git status --porcelain
+    $dirty = Get-NativeOutput git @('status', '--porcelain')
     if ($dirty -and -not $AllowDirty) { Fail 'working tree has changes. Commit them or pass -AllowDirty (for dry runs).' }
-    $commit = (git rev-parse HEAD).Trim()
+    $commit = "$(Get-NativeOutput git @('rev-parse', 'HEAD'))".Trim()
+    if ($commit -notmatch '^[0-9a-f]{40}$') { Fail "git rev-parse HEAD returned '$commit'." }
+    $today = Get-Date -Format 'yyyy-MM-dd'
 
     $changelog = Get-Content -Raw (Join-Path $Repo 'CHANGELOG.md')
     $section = [regex]::Match($changelog, "(?ms)^## \[$([regex]::Escape($Version))\][^\n]*\n(.*?)(?=^## \[|\z)")
@@ -188,6 +210,13 @@ try {
     $unfinished = @()
     if ($heading -match 'Unreleased') { $unfinished += "the heading says Unreleased (set the date: $heading)" }
     if ($changes -match '\bTODO\b') { $unfinished += 'it still has TODO placeholders' }
+    # The manifest's "released" and the winget ReleaseDate are today's date; the changelog
+    # must say the same.
+    if ($heading -and $heading -notmatch 'Unreleased') {
+        $dateMatch = [regex]::Match($heading, '\]\s*-\s*(\d{4}-\d{2}-\d{2})\s*$')
+        if (-not $dateMatch.Success) { $unfinished += "the heading has no date (expected '## [$Version] - $today': $heading)" }
+        elseif ($dateMatch.Groups[1].Value -ne $today) { $unfinished += "the heading date is $($dateMatch.Groups[1].Value) but today is $today" }
+    }
     foreach ($u in $unfinished) {
         if ($AllowDirty) { Write-Warning "CHANGELOG.md [$Version]: $u." } else { Fail "CHANGELOG.md [$Version]: $u." }
     }
@@ -196,7 +225,12 @@ try {
     $minisignExe = Find-Tool $Minisign 'STINKSHOT_MINISIGN' 'minisign.exe' @("$BenchTools\minisign\minisign-win64\x86_64\minisign.exe")
     $cyclonedxExe = Find-Tool $Cyclonedx 'STINKSHOT_CYCLONEDX' 'cargo-cyclonedx.exe' @("$BenchTools\cargo\bin\cargo-cyclonedx.exe", "$env:USERPROFILE\.cargo\bin\cargo-cyclonedx.exe")
     $haveKey = Test-Path -LiteralPath $SigningKey
-    if (-not $haveKey) { Write-Warning "signing key $SigningKey not found: the update manifest and SHA256SUMS stay unsigned (the app will ignore this release)." }
+    if ($AllowDirty) {
+        $haveKey = $false
+        Write-Warning "-AllowDirty: dry run. Output goes to $OutDir and nothing is signed. Never publish it."
+    } elseif (-not $haveKey) {
+        Write-Warning "signing key $SigningKey not found: the update manifest and SHA256SUMS stay unsigned (the app will ignore this release)."
+    }
 
     New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
     $env:CARGO_TARGET_DIR = $TargetDir
@@ -221,7 +255,7 @@ try {
     foreach ($a in $Arch) {
         $triple = $Triples[$a]
         Step "cargo build --release --target $triple"
-        $installed = rustup target list --installed
+        $installed = @(Get-NativeOutput rustup @('target', 'list', '--installed')) | ForEach-Object { "$_".Trim() }
         if ($installed -notcontains $triple) { Fail "Rust target $triple missing: rustup target add $triple" }
         if ($a -eq 'arm64') {
             # ring's build script needs clang for aarch64 Windows; the MSVC ARM64 build tools
@@ -251,8 +285,10 @@ try {
         Step "installer ($a)"
         $ico = Get-ChildItem -Path (Join-Path $TargetDir "$triple\release\build") -Filter stinkshot.ico -Recurse -ErrorAction SilentlyContinue |
             Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        # Without it the installer would silently get Inno's default icon.
+        if (-not $ico) { Fail "stinkshot.ico not found under $TargetDir\$triple\release\build (the app's build.rs writes it)." }
         $isccArgs = @('/Q', "/DAppVersion=$Version", "/DArch=$a", "/DStageDir=$stage", "/DOutputDir=$OutDir")
-        if ($ico) { $isccArgs += "/DIconFile=$($ico.FullName)" }
+        $isccArgs += "/DIconFile=$($ico.FullName)"
         if ($Sign -eq 'signtool') {
             $st = Find-SignTool
             $isccArgs += "/Ssigntool=`$q$st`$q sign /sha1 $CertThumbprint /fd SHA256 /tr $TimestampUrl /td SHA256 /d `$qStinkshot Setup`$q `$f"
@@ -264,11 +300,11 @@ try {
         if ($Sign -eq 'signpath') { Invoke-CodeSign @($setup) }
         $artifacts += $setup
 
-        # Smoke-test installer (own AppId, name and shortcut; docs/RELEASING.md step 5). Not a
+        # Smoke-test installer (own AppId, name and shortcut; docs/RELEASING.md step 3). Not a
         # release artifact: never hashed, signed or uploaded.
         Step "smoke-test installer ($a)"
         $testArgs = @('/Q', '/DTestBuild=1', "/DAppVersion=$Version", "/DArch=$a", "/DStageDir=$stage", "/DOutputDir=$(Join-Path $OutDir 'test')")
-        if ($ico) { $testArgs += "/DIconFile=$($ico.FullName)" }
+        $testArgs += "/DIconFile=$($ico.FullName)"
         $testArgs += (Join-Path $Repo 'packaging\inno\stinkshot.iss')
         Invoke-Native $isccExe $testArgs
     }
@@ -276,7 +312,7 @@ try {
     # ----------------------------------------------------------------- SBOM
     Step 'SBOM (CycloneDX)'
     $sbomName = "Stinkshot-$Version.cdx"
-    $env:SOURCE_DATE_EPOCH = (git log -1 --format=%ct).Trim()
+    $env:SOURCE_DATE_EPOCH = "$(Get-NativeOutput git @('log', '-1', '--format=%ct'))".Trim()
     Invoke-Native $cyclonedxExe @('cyclonedx', '--manifest-path', (Join-Path $Repo 'crates\app\Cargo.toml'), '--format', 'json', '--spec-version', '1.5', '--target', $Triples[$Arch[0]], '--override-filename', $sbomName, '-q')
     $sbomSrc = Join-Path $Repo "crates\app\$sbomName.json"
     $sbom = Join-Path $OutDir "$sbomName.json"
@@ -300,7 +336,7 @@ try {
         product  = 'stinkshot'
         version  = $Version
         tag      = $Tag
-        released = (Get-Date -Format 'yyyy-MM-dd')
+        released = $today
         page     = "https://stinkshot.com/download"
         commit   = $commit
         files    = @($files)
@@ -323,14 +359,19 @@ try {
     $x64Setup = Join-Path $OutDir "Stinkshot-$Version-x64-setup.exe"
     if (Test-Path -LiteralPath $x64Setup) {
         Step 'winget manifest (not submitted)'
-        $src = Join-Path $Repo 'packaging\winget\manifests\s\Stinkshot\Stinkshot\0.1.0'
+        # Templates with explicit placeholders: {{VERSION}}, {{INSTALLER_SHA256}}, {{RELEASE_DATE}}.
+        $src = Join-Path $Repo 'packaging\winget\template'
         $dst = Join-Path $OutDir "winget\manifests\s\Stinkshot\Stinkshot\$Version"
+        if (Test-Path -LiteralPath $dst) { Remove-Item -Recurse -Force -LiteralPath $dst }
         New-Item -ItemType Directory -Force -Path $dst | Out-Null
         $setupHash = (Get-Sha256 $x64Setup).ToUpperInvariant()
-        foreach ($y in Get-ChildItem -LiteralPath $src -Filter *.yaml) {
-            $text = (Get-Content -Raw -LiteralPath $y.FullName).Replace('0.1.0', $Version).
-                Replace(('0' * 64), $setupHash) -replace 'ReleaseDate: \d{4}-\d{2}-\d{2}', "ReleaseDate: $(Get-Date -Format 'yyyy-MM-dd')"
-            $text = $text -replace '(?m)^# Draft.*\r?\n', ''
+        $templates = @(Get-ChildItem -LiteralPath $src -Filter *.yaml)
+        if ($templates.Count -ne 3) { Fail "expected 3 winget templates in $src, found $($templates.Count)." }
+        foreach ($y in $templates) {
+            $text = (Get-Content -Raw -LiteralPath $y.FullName).Replace('{{VERSION}}', $Version).
+                Replace('{{INSTALLER_SHA256}}', $setupHash).Replace('{{RELEASE_DATE}}', $today)
+            $text = $text -replace '(?m)^# Template.*\r?\n', ''
+            if ($text -match '\{\{[^}]*\}\}') { Fail "winget template $($y.Name) has an unknown placeholder: $($Matches[0])" }
             Write-TextLf (Join-Path $dst $y.Name) $text
         }
     }
@@ -344,10 +385,73 @@ try {
 
     foreach ($a in $Arch) { Remove-Item -Recurse -Force (Join-Path $OutDir "stage-$a") }
 
+    # ------------------------------------------------------------ self-check
+    # Read back what was written and hash every listed file again, so a file that changed
+    # after it was hashed (or a wrong line) never leaves this script.
+    Step 'self-check'
+    $expected = @($artifacts | ForEach-Object { [IO.Path]::GetFileName($_) } | Sort-Object)
+    $sumNames = @()
+    foreach ($line in [IO.File]::ReadAllLines($sums)) {
+        if (-not $line.Trim()) { continue }
+        $sm = [regex]::Match($line, '^([0-9a-f]{64})  (\S.*)$')
+        if (-not $sm.Success) { Fail "SHA256SUMS has a malformed line: $line" }
+        $p = Join-Path $OutDir $sm.Groups[2].Value
+        if (-not (Test-Path -LiteralPath $p)) { Fail "SHA256SUMS lists $($sm.Groups[2].Value), which is not in $OutDir." }
+        if ((Get-Sha256 $p) -ne $sm.Groups[1].Value) { Fail "SHA256SUMS does not match $($sm.Groups[2].Value)." }
+        $sumNames += $sm.Groups[2].Value
+    }
+    if (($expected -join '|') -ne (@($sumNames | Sort-Object) -join '|')) { Fail "SHA256SUMS lists [$($sumNames -join ', ')], expected [$($expected -join ', ')]." }
+
+    $checkText = [IO.File]::ReadAllText($manifestPath)
+    $check = $checkText | ConvertFrom-Json
+    # "released" is matched as text: PowerShell 7 may turn date strings into DateTime.
+    if ($check.version -ne $Version -or $check.tag -ne $Tag -or $check.commit -ne $commit -or $checkText -notmatch ('"released":\s*"' + $today + '"')) {
+        Fail 'stinkshot-release.json does not carry this version, tag, commit and date.'
+    }
+    $manifestNames = @()
+    foreach ($entry in @($check.files)) {
+        $p = Join-Path $OutDir $entry.name
+        if (-not (Test-Path -LiteralPath $p)) { Fail "stinkshot-release.json lists $($entry.name), which is not in $OutDir." }
+        if ((Get-Item -LiteralPath $p).Length -ne [int64]$entry.size) { Fail "stinkshot-release.json has the wrong size for $($entry.name)." }
+        if ((Get-Sha256 $p) -ne $entry.sha256) { Fail "stinkshot-release.json has the wrong SHA-256 for $($entry.name)." }
+        $manifestNames += $entry.name
+    }
+    if (($expected -join '|') -ne (@($manifestNames | Sort-Object) -join '|')) { Fail "stinkshot-release.json lists [$($manifestNames -join ', ')], expected [$($expected -join ', ')]." }
+
+    if ($haveKey) {
+        foreach ($f in @($manifestPath, $sums)) {
+            if (-not (Test-Path -LiteralPath "$f.minisig")) { Fail "$([IO.Path]::GetFileName($f)).minisig is missing." }
+            Invoke-Native $minisignExe @('-V', '-q', '-p', $PublicKeyFile, '-m', $f)
+        }
+    } else {
+        # A stale signature from an earlier run must not sit beside unsigned files.
+        foreach ($f in @($manifestPath, $sums)) { if (Test-Path -LiteralPath "$f.minisig") { Remove-Item -Force -LiteralPath "$f.minisig" } }
+    }
+
+    if (Test-Path -LiteralPath $x64Setup) {
+        $wingetInstaller = Join-Path $OutDir "winget\manifests\s\Stinkshot\Stinkshot\$Version\Stinkshot.Stinkshot.installer.yaml"
+        $wingetText = [IO.File]::ReadAllText($wingetInstaller)
+        if ($wingetText -notmatch "(?m)^\s*InstallerSha256: $((Get-Sha256 $x64Setup).ToUpperInvariant())\s*$") { Fail 'the winget manifest does not carry the setup hash.' }
+        if ($wingetText -notmatch "(?m)^PackageVersion: $([regex]::Escape($Version))\s*$") { Fail 'the winget manifest does not carry the version.' }
+        if ($wingetText -notmatch "(?m)^\s*InstallerUrl: https://stinkshot\.com/download/Stinkshot-$([regex]::Escape($Version))-x64-setup\.exe\s*$") { Fail 'the winget manifest does not point at this setup file.' }
+    }
+
     Step 'done'
     Get-ChildItem -LiteralPath $OutDir | Select-Object Name, Length | Format-Table -AutoSize | Out-String | Write-Host
     if ($Sign -eq 'none') { Write-Host 'Artifacts are not Authenticode-signed (-Sign none).' }
-    Write-Host "Upload everything above except RELEASE_NOTES.md to the $Tag release (docs/RELEASING.md)."
+    if ($AllowDirty) {
+        Write-Host "Dry run (-AllowDirty): nothing in $OutDir is signed. Do not publish it." -ForegroundColor Yellow
+    } elseif (-not $haveKey) {
+        Write-Host 'Not signed with minisign (no signing key): installed copies will reject this release. Do not publish it.' -ForegroundColor Yellow
+    } else {
+        Write-Host 'Next steps (docs/RELEASING.md):'
+        Write-Host "  1. Smoke test:  powershell -ExecutionPolicy Bypass -File scripts/smoke-test.ps1 -DistDir `"$OutDir`" -TargetDir `"$TargetDir`""
+        Write-Host "  2. Tag $commit as $Tag and push the branch and the tag."
+        Write-Host "  3. Site: in the stinkshot-site repo, tools/update-site.ps1 -DistDir `"$OutDir`" (dry run), then again with -Apply."
+        Write-Host '  4. Run the checks in the site''s DEPLOY.md (step 4).'
+        Write-Host "  5. Forgejo release:  powershell -ExecutionPolicy Bypass -File scripts/publish-forgejo.ps1 -Version $Version -DistDir `"$OutDir`""
+        Write-Host "  6. winget: submit $OutDir\winget\manifests\s\Stinkshot\Stinkshot\$Version once the setup URL downloads."
+    }
 }
 finally {
     if ($script:StepName -and $script:StepName -ne 'done') {

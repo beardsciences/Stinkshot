@@ -20,17 +20,11 @@ Dependency direction: core <- stitch, history, platform <- record <- app (logo <
 
 ## Fixed contracts
 
-The public items in each crate's stub files are the contract. They compile today with
-`todo!()` bodies. Implementers fill the bodies. Rules:
-
-1. Do not rename or remove public items, or change their signatures, in a crate you do not
-   own. If you truly need a change in a crate you don't own, write it in
-   `docs/notes/<your-area>.md` under "Contract requests" and work around it locally.
-2. In your own crate you MAY add public items and private modules freely, and you may make
-   additive, backward-compatible changes to your own signatures (new fields with defaults,
-   new methods). Record every such change in your notes file.
-3. `crates/app/src/state.rs` and the `Surface` trait are shared by three app areas: do not
-   edit `state.rs` except the shell owner, and only additively.
+Every crate is implemented; nothing is a stub. The public items of `core`, `stitch`,
+`history`, `platform` and `record` are what the crates above them build on, so a change to a
+public signature goes in the same commit as its callers, with a line in the area's
+`docs/notes/<area>.md`. `crates/app/src/state.rs` and the `Surface` trait are shared by every
+app surface (overlay, history, settings, recording HUDs): prefer additive changes there.
 
 ## Conventions
 
@@ -94,5 +88,5 @@ The public items in each crate's stub files are the contract. They compile today
   retention edge cases).
 - platform/record: `#[ignore]` integration tests that need a desktop session (capture a
   monitor, OCR a rendered text image, record 2 s to MP4 and probe it). Run them with
-  `cargo test -p <crate> -- --ignored` on the dev box.
+  `cargo test -p <crate> -- --ignored --test-threads=1` on an interactive session.
 - app: build + `cargo clippy`; manual verification list in `docs/notes/app-*.md`.

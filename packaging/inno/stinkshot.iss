@@ -54,7 +54,7 @@ AppName={#AppTitle}
 AppVersion={#AppVersion}
 AppVerName={#AppTitle} {#AppVersion}
 AppPublisher=Stinkshot contributors
-AppPublisherURL=https://code.mccullough.dev/christian/stinkshot
+AppPublisherURL=https://stinkshot.com/
 AppSupportURL=https://code.mccullough.dev/christian/stinkshot/issues
 AppUpdatesURL=https://code.mccullough.dev/christian/stinkshot/releases
 AppCopyright=Copyright (C) 2026 Stinkshot contributors. GPL-3.0-or-later.
@@ -79,8 +79,9 @@ ArchitecturesInstallIn64BitMode=arm64
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 #endif
-; Windows 10 1903: Windows Graphics Capture.
-MinVersion=10.0.18362
+; Windows 10 version 2004 (build 19041): hiding Stinkshot's own windows from captures
+; (WDA_EXCLUDEFROMCAPTURE) needs it. Windows 10 is less tested than Windows 11.
+MinVersion=10.0.19041
 WizardStyle=modern
 Compression=lzma2/max
 SolidCompression=yes

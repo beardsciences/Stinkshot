@@ -46,14 +46,28 @@ the SHA-256 in the signed release info, and restarts Stinkshot on the new versio
 
 ## Install
 
-- Winget: `winget install Stinkshot.Stinkshot`.
-- Installer: `Stinkshot-<version>-x64-setup.exe` from the releases page. Installs for your user
-  only (no admin) to `%LOCALAPPDATA%\Programs\Stinkshot`. Silent:
-  `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART`, plus `/TASKS=autostart` to start with Windows.
-- Portable: unzip `Stinkshot-<version>-x64-portable.zip` anywhere and run `stinkshot.exe`.
+Download: https://stinkshot.com/
 
-Uninstalling (Settings > Apps, or `unins000.exe /VERYSILENT`) keeps your captures, history and
-settings. Each release has `SHA256SUMS` signed with minisign; SECURITY.md shows how to check it.
+Requirements: 64-bit Windows 10 version 2004 (build 19041) or later, or Windows 11. Windows 10
+is less tested than Windows 11.
+
+- Installer: `Stinkshot-<version>-x64-setup.exe`. Installs for your user only (no admin) to
+  `%LOCALAPPDATA%\Programs\Stinkshot`. Silent: `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART`, plus
+  `/TASKS=autostart` to start with Windows.
+- Portable: unzip `Stinkshot-<version>-x64-portable.zip` anywhere and run `stinkshot.exe`. It
+  needs no install, but it is not self-contained: settings, log and cache still go to
+  `%APPDATA%\Stinkshot` and `%LOCALAPPDATA%\Stinkshot`, and captures to the history folder.
+  There is no Update Now: when an update is out, it opens the download page.
+- Winget: `winget install Stinkshot.Stinkshot`. Winget can lag a few days behind a release.
+
+Releases are not code-signed yet, so Windows SmartScreen may show "Windows protected your PC"
+the first time you run the installer or the portable exe. Verify the download first (each
+release has `SHA256SUMS` signed with minisign; see SECURITY.md, Verifying a download), then
+choose More info, then Run anyway.
+
+Uninstall: Settings > Apps > Installed apps > Stinkshot, or run
+`%LOCALAPPDATA%\Programs\Stinkshot\unins000.exe` (add `/VERYSILENT` for no prompts). It keeps
+your captures, history and settings. Portable: quit Stinkshot and delete the folder.
 
 ## Hotkeys
 
@@ -88,21 +102,41 @@ With no arguments Stinkshot starts in the tray. Subcommands act on the running i
 it if needed.
 
 ```
+stinkshot [--tray]
 stinkshot region
 stinkshot window [--out FILE] [--cursor]
 stinkshot full [--out FILE] [--monitor N] [--cursor]
 stinkshot scroll
 stinkshot ocr [--file IMAGE]
 stinkshot repeat
+stinkshot text [--paragraph]
+stinkshot pick-color
 stinkshot record
 stinkshot gif
 stinkshot history
-stinkshot settings
+stinkshot settings [--page NAME]
+stinkshot update
 stinkshot quit
+stinkshot --version
 ```
 
-`quit` asks the running instance to exit and waits for it; it never starts one. `window --out`, `full --out` and `ocr --file` run headless and exit. The output format follows the
-file extension (png, jpg, webp). The others are handy for scripts, AutoHotkey and Stream Deck.
+- `window --out`, `full --out` and `ocr --file` run headless and exit. The output format
+  follows the file extension (png, jpg, webp).
+- `--monitor N` is 1-based, in system order. Without it, `full` takes the monitor under the
+  cursor.
+- `text` captures the text selected in the focused app; `--paragraph` grows the selection to
+  whole paragraphs first.
+- `pick-color` picks a color anywhere on screen and copies it.
+- `record` and `gif` toggle: run again to stop.
+- `settings --page NAME` opens Settings on a page: general, hotkeys, capture, editor,
+  recording, history, privacy, help or about.
+- `update` checks for a newer release and installs it. It needs Settings > Privacy > Check for
+  Updates on.
+- `quit` asks the running instance to exit and waits for it; it never starts one.
+- `--tray` starts in the tray only (start with Windows uses it). Plain `stinkshot` while it is
+  already running opens History.
+
+The others are handy for scripts, AutoHotkey and Stream Deck.
 
 ## Files and config
 
@@ -110,23 +144,28 @@ file extension (png, jpg, webp). The others are handy for scripts, AutoHotkey an
 - Log: `%APPDATA%\Stinkshot\stinkshot.log`.
 - Cache: `%LOCALAPPDATA%\Stinkshot\cache` holds the About page's pre-rendered logo animation
   (a few MB, safe to delete; it is rebuilt in the background).
-- Captures: the history folder set in Settings. Annotation data lives beside each image in a
-  `.stinkshot` subfolder, together with the search index and thumbnails.
+- Captures: the history folder set in Settings, `%USERPROFILE%\Pictures\Stinkshot` by default.
+  Annotation data lives beside each image in a `.stinkshot` subfolder, together with the
+  search index and thumbnails.
+- Update downloads: `%TEMP%\Stinkshot-update` (the installer Update Now fetches).
+- Program (installer): `%LOCALAPPDATA%\Programs\Stinkshot`.
 
 ## Redaction and Editable Originals
 
-Redaction (Blur, Pixelate and Redact boxes) destroys the pixels in the exported image. However,
-with Keep Editable Originals on (the default), Stinkshot also keeps the full, unannotated original
-of every annotated capture in `<history folder>\.stinkshot\edit\<file name>.base.png` so you can
-re-edit it later. That original still contains whatever you redacted. If you share or sync your
-history folder, or copy the `.stinkshot` folder, you share those originals too. To prevent this,
-turn off Settings > History > Keep Editable Originals (existing originals can be deleted by
-removing the `edit` folder), and never share the `.stinkshot` folder.
+Redaction (Blur, Pixelate and Redact boxes) destroys the pixels in the exported image. With Keep
+Editable Originals on (the default), Stinkshot also keeps an editable copy of every annotated
+capture in `<history folder>\.stinkshot\edit` so you can change the annotations later. That copy
+has the redactions applied too: whatever sits under a Blur, Pixelate or Redact box, including
+pasted pictures and text, is flattened and never stored. It does keep what other annotations
+cover (an arrow or a filled rectangle is not a redaction), so use a Redact box for anything
+secret. Copies written by 0.1.4 and earlier can still hold a pasted picture under a redaction
+until the capture is saved again. To keep no editable copies, turn off Settings > History >
+Keep Editable Originals and remove the `edit` folder.
 
 ## Build
 
-Requirements: Windows 10 or 11, Rust 1.95 or newer (MSVC toolchain), Visual Studio Build Tools with
-the C++ workload and a Windows SDK.
+Requirements: Windows 10 version 2004 or later, or Windows 11; Rust 1.95 or newer (MSVC
+toolchain); Visual Studio Build Tools with the C++ workload and a Windows SDK.
 
 ```
 cargo build --release
@@ -143,10 +182,14 @@ The second command runs desktop integration tests that capture the real screen, 
 and install input hooks, so run it on an interactive session.
 
 The workspace is split into `core` (image, annotation render, config), `stitch`, `history`,
-`platform` (Windows APIs), `record` and `app` (UI). See `docs/ARCHITECTURE.md`.
+`platform` (Windows APIs), `record`, `logo` (icon and About animation renderer) and `app` (UI).
+See `docs/ARCHITECTURE.md`.
 
 Release builds (installer, zip, SBOM, checksums, signed update manifest): `scripts\release.ps1`,
 see `docs/RELEASING.md`. Contributing: `CONTRIBUTING.md`. Changes: `CHANGELOG.md`.
+
+Source and issues live at https://code.mccullough.dev/christian/stinkshot. The GitHub
+repository is a read-only mirror: report issues and send changes on code.mccullough.dev.
 
 ## License
 

@@ -8,8 +8,10 @@ round trip.
 - **Local only.** No uploads, share targets, cloud destinations, accounts or telemetry, ever.
   The update check in `crates/app/src/update.rs` is the only network code. Pull requests that
   add network access anywhere else are closed.
-- **Windows first.** Windows 10 1903+ and 11. Keep OS calls inside `crates/platform` and
-  `crates/record` so other platforms stay possible later.
+- **Windows first.** The minimum is Windows 10 version 2004 (build 19041); hiding Stinkshot's
+  own windows from captures needs it. Windows 11 is the main target and Windows 10 is less
+  tested. Keep OS calls inside `crates/platform` and `crates/record` so other platforms stay
+  possible later.
 - **UI copy.** Title Case for labels (buttons, menus, headings, setting names), sentence case
   for descriptions. One short line per description; errors say what to do. Use the tokens and
   widgets in `crates/app/src/theme.rs`.

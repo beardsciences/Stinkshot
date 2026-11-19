@@ -1,7 +1,7 @@
-# Draft. Do not submit until the v0.1.0 release and its assets are public (docs/RELEASING.md).
+# Template. scripts/release.ps1 fills {{VERSION}} (docs/RELEASING.md).
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.version.1.28.0.schema.json
 PackageIdentifier: Stinkshot.Stinkshot
-PackageVersion: 0.1.0
+PackageVersion: {{VERSION}}
 DefaultLocale: en-US
 ManifestType: version
 ManifestVersion: 1.28.0

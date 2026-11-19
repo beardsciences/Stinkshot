@@ -6,8 +6,8 @@
   telemetry, and there never will be.
 - The only network request is the update check. It is off by default. When on, it makes plain
   HTTPS GETs to stinkshot.com (`/release/stinkshot-release.json` and its signature) at most
-  once a day, and sends nothing beyond what
-  any GET carries (a `Stinkshot/<version>` User-Agent).
+  once a day, and sends nothing beyond what any GET carries (a `Stinkshot/<version>`
+  User-Agent).
 - The update check trusts version info only after verifying its minisign (Ed25519) signature
   against the public key built into the app.
 - Update Now runs only when you click it (or run `stinkshot update`). It downloads the setup.exe
@@ -19,8 +19,9 @@ A finding that breaks any of these is a security bug, as is anything that lets a
 program or web page read captures through Stinkshot, or a redaction that leaves the original
 pixels in the exported image.
 
-Known and documented: with Keep Editable Originals on, the unredacted original of an annotated
-capture is kept in `<history folder>\.stinkshot\edit` (see README, Privacy).
+Known and documented: with Keep Editable Originals on, an editable copy of an annotated capture
+is kept in `<history folder>\.stinkshot\edit`. Redactions are applied to it, but what other
+annotations cover is kept (see README, Redaction and Editable Originals).
 
 ## Supported versions
 
