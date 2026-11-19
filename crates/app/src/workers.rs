@@ -88,6 +88,25 @@ pub enum WorkerMsg {
     UpdateDownloaded(Result<std::path::PathBuf, String>),
     /// The update installer ended while this copy was still running (exit code if known).
     InstallerExited(Option<i32>),
+    /// The configured History folder that was unavailable can be opened again
+    /// (`retry_history_folder`): `folder` is the setting it was opened for, `history` is
+    /// None when it still cannot be opened.
+    HistoryFolderRetried {
+        folder: String,
+        history: Option<Arc<History>>,
+    },
+    /// The answer to `ask_discard`: go on with `then` when `yes`.
+    DiscardAnswer {
+        then: AfterDiscard,
+        yes: bool,
+    },
+}
+
+/// What waits for the user's answer about unsaved Editor Window edits (`ask_discard`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AfterDiscard {
+    Quit,
+    InstallUpdate,
 }
 
 pub struct CaptureSaved {
@@ -146,9 +165,14 @@ impl Env {
     }
 }
 
-fn spawn(name: &str, f: impl FnOnce() + Send + 'static) {
-    if let Err(e) = std::thread::Builder::new().name(name.to_string()).spawn(f) {
-        log::error!("cannot spawn worker {name}: {e}");
+/// False when the thread could not be started (`f` is dropped unrun).
+fn spawn(name: &str, f: impl FnOnce() + Send + 'static) -> bool {
+    match std::thread::Builder::new().name(name.to_string()).spawn(f) {
+        Ok(_) => true,
+        Err(e) => {
+            log::error!("cannot spawn worker {name}: {e}");
+            false
+        }
     }
 }
 
@@ -201,21 +225,36 @@ fn job_inner(
 ) {
     let env = env.clone();
     let in_flight = InFlight::begin();
-    spawn(name, move || {
-        let _in_flight = in_flight;
-        let e2 = env.clone();
-        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(&env))).is_err() {
-            log::error!("worker {name} panicked");
+    // Shared with this thread so a job that never starts still releases what it owned.
+    let recover = Arc::new(Mutex::new(recover));
+    let failed = {
+        let env = env.clone();
+        let recover = recover.clone();
+        move || {
+            let recover = recover.lock().ok().and_then(|mut r| r.take());
             if let Some(recover) = recover {
-                e2.send(recover());
+                env.send(recover());
             }
-            e2.notify(
+            env.notify(
                 tr!("shell.internal.title"),
                 tr!("shell.internal.body", hint = errors::log_hint()),
                 true,
             );
         }
+    };
+    let on_panic = failed.clone();
+    let started = spawn(name, move || {
+        let _in_flight = in_flight;
+        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(&env))).is_err() {
+            log::error!("worker {name} panicked");
+            on_panic();
+        }
     });
+    if !started {
+        // Out of threads or memory: without the terminal message the shell would wait for
+        // this job until restart (pending window capture, scroll HUD, recorder state).
+        failed();
+    }
 }
 
 /// Clipboard failures in words a user can act on. A busy clipboard (another app holding it
@@ -287,34 +326,56 @@ pub fn finish_capture(env: &Env, out: CaptureOutput) {
             target,
         );
         let mut updated = false;
-        let (item, path) = match written {
+        // Set when the History folder could not be written: the pixels then go to the
+        // default folder as a plain file, or failing that to the clipboard, and the user is
+        // told which (below, once the outcome is known).
+        let mut history_error = None;
+        let (item, mut path) = match written {
             Ok(w) => {
                 updated = w.updated;
                 crate::recompress::enqueue(&w.path, Some((env.history.clone(), w.id)));
                 (Some(w.id), Some(w.path))
             }
             Err(e) => {
-                let body = report(
-                    "saving capture to history",
-                    &e,
-                    tr!("shell.save.history_failed.body"),
-                );
-                env.notify(tr!("shell.save.history_failed"), body, true);
+                history_error = Some(e);
                 (None, None)
             }
         };
         drop(base);
+        if history_error.is_some() {
+            match save_to_default_folder(&flattened, &env.cfg, &source, env.history.folder()) {
+                Some(Ok(p)) => path = Some(p),
+                Some(Err(e)) => log::warn!("saving capture to the default folder: {e:#}"),
+                None => {}
+            }
+        }
+        // CopyText is about the text; everything else must not lose the picture.
+        let rescue_copy =
+            history_error.is_some() && path.is_none() && action != FinishAction::CopyText;
 
-        let want_copy = edit_save::copies_image(action, env.cfg.general.copy_to_clipboard);
+        let want_copy =
+            edit_save::copies_image(action, env.cfg.general.copy_to_clipboard) || rescue_copy;
         let mut copied_image = false;
         if want_copy {
             match clipboard::set_image(&flattened) {
                 Ok(()) => copied_image = true,
                 Err(e) => {
                     log::error!("clipboard copy failed: {e:#}");
-                    env.notify(tr!("shell.clipboard.failed"), clipboard_error(&e), true);
+                    if !rescue_copy {
+                        env.notify(tr!("shell.clipboard.failed"), clipboard_error(&e), true);
+                    }
                 }
             }
+        }
+        if let Some(e) = &history_error {
+            let kept = history_failure_outcome(path.as_deref(), copied_image);
+            let body = errors::report_with(
+                "saving capture to history",
+                e,
+                tr!("shell.save.history_failed.body"),
+                &kept,
+            );
+            env.notify(tr!("shell.save.history_failed"), body, true);
         }
 
         let mut saved_as = None;
@@ -416,6 +477,63 @@ pub fn finish_capture(env: &Env, out: CaptureOutput) {
             }
         }
     });
+}
+
+/// Where a capture goes when the History folder cannot be written: the default folder, as a
+/// plain file (History picks it up when that folder is in use again). None when the default
+/// folder is the one that just failed.
+fn save_to_default_folder(
+    flat: &Rgba,
+    cfg: &Config,
+    source: &SourceInfo,
+    failed: &Path,
+) -> Option<anyhow::Result<PathBuf>> {
+    let dir = Config::default().history_folder();
+    let same = |a: &Path, b: &Path| {
+        let lower = |p: &Path| {
+            p.to_string_lossy()
+                .trim_end_matches(['\\', '/'])
+                .to_lowercase()
+        };
+        lower(a) == lower(b)
+    };
+    if same(&dir, failed) {
+        return None;
+    }
+    Some(save_plain(flat, cfg, source, &dir))
+}
+
+/// Write `flat` into `dir` under the configured file name pattern, without indexing it.
+fn save_plain(
+    flat: &Rgba,
+    cfg: &Config,
+    source: &SourceInfo,
+    dir: &Path,
+) -> anyhow::Result<PathBuf> {
+    let fmt = cfg.capture.format.for_size(flat.width, flat.height);
+    let parts = NameParts {
+        now: chrono::Local::now(),
+        app: &source.app,
+        title: &source.window_title,
+        width: flat.width,
+        height: flat.height,
+    };
+    let path = naming::unique_path(dir, &cfg.capture.filename_pattern, &parts, fmt.extension());
+    encode_save(flat, &path, cfg)?;
+    Ok(path)
+}
+
+/// The sentence that says what became of a capture History could not take: saved to
+/// `elsewhere`, copied, or not kept.
+fn history_failure_outcome(elsewhere: Option<&Path>, copied: bool) -> String {
+    match elsewhere.and_then(|p| p.parent()) {
+        Some(dir) => tr!(
+            "shell.save.history_failed.elsewhere",
+            dir = dir.display().to_string()
+        ),
+        None if copied => tr!("shell.save.history_failed.clipboard").to_string(),
+        None => tr!("shell.save.history_failed.lost").to_string(),
+    }
 }
 
 pub fn capture_window(env: &Env, frozen: Frozen, windows: Vec<WinInfo>, win: WinInfo) {
@@ -771,9 +889,7 @@ fn export_inner(
                 // Different volume, or the file is still open elsewhere: copy. A leftover
                 // original is swept from the temp folder later.
                 std::fs::copy(source, &dest)?;
-                if let Err(e) = std::fs::remove_file(source) {
-                    log::debug!("temp recording {} not removed: {e}", source.display());
-                }
+                remove_recording(source);
                 Ok::<(), std::io::Error>(())
             });
             if moved.is_ok() {
@@ -795,7 +911,7 @@ fn export_inner(
 
     // Keep the raw recording if nothing could be written.
     if !items.is_empty() && !source_consumed {
-        let _ = std::fs::remove_file(source);
+        remove_recording(source);
     }
 
     let mut indexed = Vec::new();
@@ -844,17 +960,79 @@ pub fn keep_raw_recording(env: &Env, source: &Path) -> anyhow::Result<()> {
     }
 }
 
+/// Extension of the marker written beside (and, failing all else, given to) a raw recording
+/// that is finished with but could not be deleted. `leftover_recordings` never recovers one.
+const DISCARDED_EXT: &str = "discarded";
+
+fn discard_marker(path: &Path) -> PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(".");
+    name.push(DISCARDED_EXT);
+    PathBuf::from(name)
+}
+
+fn removed(path: &Path) -> bool {
+    match std::fs::remove_file(path) {
+        Ok(()) => true,
+        Err(e) => e.kind() == std::io::ErrorKind::NotFound,
+    }
+}
+
+/// Delete a raw recording that was discarded or has been saved. The Trim window's preview
+/// readers can hold the file open for a moment after it closes, and a file left behind
+/// would come back as a "recovered" recording at the next launch: so it is marked as
+/// discarded first, then the delete is retried for a few seconds on a worker.
+pub fn remove_recording(path: &Path) {
+    if removed(path) {
+        return;
+    }
+    let marker = discard_marker(path);
+    if let Err(e) = std::fs::write(&marker, b"") {
+        log::warn!("mark {} as discarded: {e}", path.display());
+    }
+    let path = path.to_path_buf();
+    // Counted as in-flight work so a quit waits for the retries.
+    let in_flight = InFlight::begin();
+    spawn("recording-remove", move || {
+        let _in_flight = in_flight;
+        for _ in 0..20 {
+            std::thread::sleep(Duration::from_millis(250));
+            if removed(&path) {
+                let _ = std::fs::remove_file(&marker);
+                return;
+            }
+        }
+        // Still held: park it under the marker's name. If even that fails the marker stays
+        // and the next launch deletes both.
+        match std::fs::rename(&path, &marker) {
+            Ok(()) => log::info!("raw recording parked as {}", marker.display()),
+            Err(e) => log::warn!("raw recording {} not removed: {e}", path.display()),
+        }
+    });
+}
+
 /// Raw recordings a previous run left in the temp folder: it quit, crashed or lost the GPU
 /// before they were saved. Call at startup, before this run can start one of its own.
 pub fn leftover_recordings(history: &History) -> Vec<PathBuf> {
-    let dir = history.folder().join(".stinkshot").join("tmp");
-    let Ok(entries) = std::fs::read_dir(&dir) else {
+    leftover_in(&history.folder().join(".stinkshot").join("tmp"))
+}
+
+fn leftover_in(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
-    entries
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("mp4")))
+    let has_ext = |p: &Path, ext: &str| p.extension().is_some_and(|x| x.eq_ignore_ascii_case(ext));
+    let files: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
+    // Finish what `remove_recording` could not: the recording a marker names, then the
+    // marker (or parked file) itself.
+    for marker in files.iter().filter(|p| has_ext(p, DISCARDED_EXT)) {
+        if removed(&marker.with_extension("")) {
+            let _ = std::fs::remove_file(marker);
+        }
+    }
+    files
+        .into_iter()
+        .filter(|p| has_ext(p, "mp4") && p.exists() && !discard_marker(p).exists())
         .collect()
 }
 
@@ -1178,10 +1356,16 @@ pub fn start_background(cfg: Arc<Mutex<BgConfig>>, tx: Sender<WorkerMsg>) -> Sen
         loop {
             let snapshot = cfg.lock().map(|g| g.clone()).ok();
             if let Some(c) = snapshot {
-                if kind == BgKick::Full {
-                    maintain(&c, &tx);
+                // One unreadable file must not end retention and indexing until restart.
+                let pass = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    if kind == BgKick::Full {
+                        maintain(&c, &tx);
+                    }
+                    index_ocr(&c, &tx);
+                }));
+                if pass.is_err() {
+                    log::error!("history maintenance pass panicked; trying again next pass");
                 }
-                index_ocr(&c, &tx);
             }
             kind = match kick_rx.recv_timeout(Duration::from_secs(3600)) {
                 Ok(BgKick::Full) => BgKick::Full,
@@ -1330,15 +1514,70 @@ pub fn watch_installer(tx: Sender<WorkerMsg>, mut child: std::process::Child) {
 }
 
 pub fn check_updates(tx: Sender<WorkerMsg>) {
-    spawn("update-check", move || {
+    let tx2 = tx.clone();
+    let started = spawn("update-check", move || {
         let r = update::check().map_err(|e| format!("{e:#}"));
         post(&tx, WorkerMsg::UpdateChecked(r));
     });
+    if !started {
+        // The shell waits for this answer before it checks again.
+        post(&tx2, WorkerMsg::UpdateChecked(Err(NOT_STARTED.into())));
+    }
+}
+
+/// First start of another version: remove the setup.exe the update left in `%TEMP%`. The
+/// installer that started this copy may still be running from it, so try for a while.
+pub fn remove_update_download() {
+    spawn("update-cleanup", || {
+        for _ in 0..6 {
+            if update::remove_stale_download() {
+                return;
+            }
+            std::thread::sleep(Duration::from_secs(20));
+        }
+    });
+}
+
+/// Error text when a worker thread could not be started.
+const NOT_STARTED: &str = "the task could not be started";
+
+/// Try to open the configured History folder `dir` that was unavailable (`folder` is the
+/// setting's text), off the UI thread: an unreachable share can take many seconds to fail.
+pub fn retry_history_folder(tx: Sender<WorkerMsg>, folder: String, dir: PathBuf) {
+    let (tx2, folder2) = (tx.clone(), folder.clone());
+    let started = spawn("history-folder-retry", move || {
+        let history = History::open(&dir).ok().map(Arc::new);
+        post(&tx, WorkerMsg::HistoryFolderRetried { folder, history });
+    });
+    if !started {
+        post(
+            &tx2,
+            WorkerMsg::HistoryFolderRetried {
+                folder: folder2,
+                history: None,
+            },
+        );
+    }
+}
+
+/// Ask whether unsaved Editor Window edits may be discarded (`message`), on its own thread
+/// so the UI, a recording and its HUD keep running behind the question.
+pub fn ask_discard(tx: Sender<WorkerMsg>, then: AfterDiscard, message: String) {
+    let tx2 = tx.clone();
+    let started = spawn("discard-question", move || {
+        let yes = crate::sysutil::confirm_box("Stinkshot", &message);
+        post(&tx, WorkerMsg::DiscardAnswer { then, yes });
+    });
+    if !started {
+        // Unanswered counts as No: nothing is discarded.
+        post(&tx2, WorkerMsg::DiscardAnswer { then, yes: false });
+    }
 }
 
 /// Update Now: download and verify `inst` (see `update::download_installer`).
 pub fn download_update(tx: Sender<WorkerMsg>, inst: update::Installer) {
-    spawn("update-download", move || {
+    let tx2 = tx.clone();
+    let started = spawn("update-download", move || {
         let mut last = 0u8;
         let r = update::download_installer(&inst, |done, total| {
             let pct = (done.saturating_mul(100) / total.max(1)).min(100) as u8;
@@ -1350,11 +1589,122 @@ pub fn download_update(tx: Sender<WorkerMsg>, inst: update::Installer) {
         .map_err(|e| format!("{e:#}"));
         post(&tx, WorkerMsg::UpdateDownloaded(r));
     });
+    if !started {
+        post(&tx2, WorkerMsg::UpdateDownloaded(Err(NOT_STARTED.into())));
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_discarded_recording_held_open_does_not_come_back() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let dir = std::env::temp_dir().join(format!("stinkshot-discard-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (kept, held, free) = (dir.join("a.mp4"), dir.join("b.mp4"), dir.join("c.mp4"));
+        for p in [&kept, &held, &free] {
+            std::fs::write(p, b"x").unwrap();
+        }
+        // Not in use: gone at once, no marker.
+        remove_recording(&free);
+        assert!(!free.exists() && !discard_marker(&free).exists());
+        // Held without delete sharing, as the preview readers hold it.
+        let handle = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(1)
+            .open(&held)
+            .unwrap();
+        remove_recording(&held);
+        assert!(held.exists() && discard_marker(&held).exists());
+        assert_eq!(leftover_in(&dir), vec![kept.clone()]);
+        // Released: the retry (or the next launch's listing) removes file and marker.
+        drop(handle);
+        let end = std::time::Instant::now() + Duration::from_secs(5);
+        while (held.exists() || discard_marker(&held).exists()) && std::time::Instant::now() < end {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(!held.exists() && !discard_marker(&held).exists());
+        // A marker left by a run that was killed mid-retry is acted on at the next launch.
+        std::fs::write(&held, b"x").unwrap();
+        std::fs::write(discard_marker(&held), b"").unwrap();
+        assert_eq!(leftover_in(&dir), vec![kept.clone()]);
+        assert!(!held.exists() && !discard_marker(&held).exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_capture_history_cannot_take_is_saved_as_a_plain_file() {
+        let dir = std::env::temp_dir().join(format!("stinkshot-test-plain-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let img = Rgba::filled(8, 6, [10, 20, 30, 255]);
+        // The folder does not exist yet: it is created.
+        let path = save_plain(&img, &Config::default(), &SourceInfo::default(), &dir).unwrap();
+        assert_eq!(path.parent(), Some(dir.as_path()));
+        let back = Rgba::load(&path).unwrap();
+        assert_eq!((back.width, back.height), (8, 6));
+        // A second one never overwrites the first.
+        let second = save_plain(&img, &Config::default(), &SourceInfo::default(), &dir).unwrap();
+        assert_ne!(second, path);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn default_folder_is_not_a_fallback_for_itself() {
+        let img = Rgba::filled(2, 2, [0, 0, 0, 255]);
+        let default = Config::default().history_folder();
+        let cfg = Config::default();
+        let src = SourceInfo::default();
+        assert!(save_to_default_folder(&img, &cfg, &src, &default).is_none());
+        // Case and a trailing separator do not make it another folder.
+        let shouted = PathBuf::from(format!("{}\\", default.display()).to_uppercase());
+        assert!(save_to_default_folder(&img, &cfg, &src, &shouted).is_none());
+    }
+
+    #[test]
+    fn history_failure_says_what_became_of_the_capture() {
+        let saved = history_failure_outcome(Some(Path::new("C:\\Shots\\a.png")), false);
+        assert!(saved.contains("C:\\Shots"), "{saved}");
+        assert!(!saved.contains("a.png"));
+        let copied = history_failure_outcome(None, true);
+        assert!(copied.to_lowercase().contains("clipboard"), "{copied}");
+        let lost = history_failure_outcome(None, false);
+        assert_ne!(lost, copied);
+        assert!(!lost.to_lowercase().contains("saved to"));
+    }
+
+    #[test]
+    fn a_failed_job_sends_its_terminal_message_once() {
+        // A thread that cannot be started takes the same path as a panicking job; only the
+        // panic can be provoked here.
+        let (tx, rx) = channel();
+        let (bg, _bg_rx) = channel();
+        let dir = std::env::temp_dir().join(format!("stinkshot-test-job-{}", std::process::id()));
+        let env = Env {
+            tx,
+            history: Arc::new(History::open(&dir).unwrap()),
+            ocr: None,
+            cfg: Config::default(),
+            bg,
+        };
+        job_recovering(
+            &env,
+            "test-job",
+            |_| panic!("boom"),
+            || WorkerMsg::WindowCaptureFailed("recovered".into()),
+        );
+        let first = rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert!(matches!(first, WorkerMsg::WindowCaptureFailed(t) if t == "recovered"));
+        let second = rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert!(matches!(
+            second,
+            WorkerMsg::Cmd(Command::Notify { error: true, .. })
+        ));
+        drop(env);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn a_framed_capture_keeps_its_unframed_picture_for_re_editing() {

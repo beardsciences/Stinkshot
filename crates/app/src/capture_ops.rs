@@ -73,7 +73,10 @@ pub fn capture_window_image(cfg: &Config, win: &WinInfo, cursor: bool) -> anyhow
             include_cursor: cursor,
         },
     )
-    .with_context(|| format!("capture window \"{}\"", win.title))?;
+    // The title can name a document or a site: debug level only, never in the error text
+    // (which is logged as a warning).
+    .inspect_err(|_| log::debug!("capture of window \"{}\" failed", win.title))
+    .context("capture window")?;
     Ok(match window_fx(cfg, win) {
         Some(fx) => frame::apply_window_fx(&img, &fx),
         None => img,

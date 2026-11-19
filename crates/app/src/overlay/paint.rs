@@ -1,6 +1,10 @@
 //! egui-painter drawing for the overlay: live shape previews (the authoritative pixels come
 //! from `annotate::render`), selection chrome, shape handles, the loupe.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use egui::epaint::StrokeKind;
 use egui::{Align2, Color32, FontId, Painter, Pos2, Rect, Shape as EShape, Stroke, Vec2};
 use stinkshot_core::annotate::{self, ArrowHead, Shape, ShapeKind};
@@ -38,8 +42,15 @@ pub fn color32(c: [u8; 4]) -> Color32 {
 }
 
 /// Paint an approximation of `shape`. `skip_text` hides the text of a textual shape that is
-/// being edited by the inline TextEdit.
-pub fn paint_shape(painter: &Painter, m: ImgToPt, shape: &Shape, skip_text: bool) {
+/// being edited by the inline TextEdit. `images` holds the textures of pointers and
+/// pictures.
+pub fn paint_shape(
+    painter: &Painter,
+    m: ImgToPt,
+    shape: &Shape,
+    skip_text: bool,
+    images: &ImageTextures,
+) {
     let col = color32(shape.style.color);
     let stroke_w = m.len(shape.style.width).max(1.0);
     let stroke = Stroke::new(stroke_w, col);
@@ -279,30 +290,51 @@ pub fn paint_shape(painter: &Painter, m: ImgToPt, shape: &Shape, skip_text: bool
             dashed_rect(painter, m.r(*rect), Color32::from_white_alpha(200));
         }
         ShapeKind::Cursor { rect, image } | ShapeKind::Image { rect, image } => {
-            let tex = cursor_texture(painter.ctx(), image.rgba());
+            let tex = images.get(painter.ctx(), &image.0);
             let uv = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
             painter.image(tex.id(), m.r(*rect), uv, Color32::WHITE);
         }
     }
 }
 
-/// The pointer bitmap as a texture, uploaded once per distinct image and kept in the
-/// context's memory.
-fn cursor_texture(ctx: &egui::Context, img: &Rgba) -> egui::TextureHandle {
-    use std::hash::{Hash, Hasher};
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    (img.width, img.height, &img.data).hash(&mut h);
-    let id = egui::Id::unique(("ov-cursor-tex", h.finish()));
-    if let Some(t) = ctx.data(|d| d.get_temp::<egui::TextureHandle>(id)) {
-        return t;
+/// Textures of the pointer bitmap and pasted pictures for live painting, uploaded once
+/// per image. Keyed by the image's `Arc` (shapes and undo snapshots share it), so nothing
+/// is hashed per frame, and owned by the editor, so they are freed with it.
+#[derive(Default)]
+pub struct ImageTextures {
+    /// By `Arc` address; the entry keeps the image alive so the address stays its own.
+    by_image: RefCell<HashMap<usize, (Arc<Rgba>, egui::TextureHandle)>>,
+}
+
+impl ImageTextures {
+    fn get(&self, ctx: &egui::Context, img: &Arc<Rgba>) -> egui::TextureHandle {
+        let key = Arc::as_ptr(img) as usize;
+        if let Some((_, t)) = self.by_image.borrow().get(&key) {
+            return t.clone();
+        }
+        let ci = egui::ColorImage::from_rgba_unmultiplied(
+            [img.width as usize, img.height as usize],
+            &img.data,
+        );
+        let t = ctx.load_texture("ov-cursor", ci, egui::TextureOptions::LINEAR);
+        self.by_image
+            .borrow_mut()
+            .insert(key, (img.clone(), t.clone()));
+        t
     }
-    let ci = egui::ColorImage::from_rgba_unmultiplied(
-        [img.width as usize, img.height as usize],
-        &img.data,
-    );
-    let t = ctx.load_texture("ov-cursor", ci, egui::TextureOptions::LINEAR);
-    ctx.data_mut(|d| d.insert_temp(id, t.clone()));
-    t
+
+    /// Free the textures of images nothing else holds any more (deleted and gone from the
+    /// undo history and the shape clipboard).
+    pub fn prune(&self) {
+        self.by_image
+            .borrow_mut()
+            .retain(|_, (img, _)| Arc::strong_count(img) > 1);
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.by_image.borrow().len()
+    }
 }
 
 /// Dim everything inside `clip` except `hole` (used for spotlight previews).
@@ -634,5 +666,25 @@ mod tests {
             m.r(RectF::new(0.0, 0.0, 10.0, 10.0)).size(),
             Vec2::new(5.0, 5.0)
         );
+    }
+
+    #[test]
+    fn image_textures_are_per_image_and_freed_with_it() {
+        let ctx = egui::Context::default();
+        let tex = ImageTextures::default();
+        let img = Arc::new(Rgba::filled(4, 4, [1, 2, 3, 255]));
+        let a = tex.get(&ctx, &img);
+        let b = tex.get(&ctx, &img.clone());
+        assert_eq!(a.id(), b.id());
+        assert_eq!(tex.len(), 1);
+        // Another image with the same pixels has its own entry (nothing is hashed).
+        let twin = Arc::new((*img).clone());
+        assert_ne!(tex.get(&ctx, &twin).id(), a.id());
+        tex.prune();
+        assert_eq!(tex.len(), 2);
+        // Gone from the document, the history and the clipboard: its texture goes too.
+        drop(twin);
+        tex.prune();
+        assert_eq!(tex.len(), 1);
     }
 }

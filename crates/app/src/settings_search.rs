@@ -244,6 +244,16 @@ pub fn check_row(title: &str, desc: &str) -> RowCheck {
     })
 }
 
+/// Whether a row with this text is drawn this frame (always, outside a search), for content
+/// that belongs to a row. Unlike `check_row` it does not count as a row.
+pub fn row_visible(title: &str, desc: &str) -> bool {
+    ACTIVE.with(|a| {
+        a.borrow()
+            .as_ref()
+            .is_none_or(|a| match_row(&a.query, title, desc, &a.section, &a.keywords).is_some())
+    })
+}
+
 /// `text` as a layout job with `ranges` in `mark` colors (text, background).
 pub fn highlighted(
     text: &str,
@@ -380,9 +390,13 @@ mod tests {
             RowCheck::Hit(_)
         ));
         assert!(matches!(check_row("Language", ""), RowCheck::Hidden));
+        // Asking whether a row shows does not count it.
+        assert!(row_visible("Theme", "Dark or light."));
+        assert!(!row_visible("Language", ""));
         assert_eq!(s.finish(), (1, 6));
         assert!(!searching());
         assert!(matches!(check_row("Theme", ""), RowCheck::Normal));
+        assert!(row_visible("Language", ""));
     }
 
     #[test]

@@ -728,6 +728,14 @@ impl Hotkeys {
     }
 }
 
+impl Drop for Hotkeys {
+    /// Exits that skip `quit` (a panic unwinding out of the event loop, an error during
+    /// start-up) must still hand PrintScreen back. A no-op after `shutdown`.
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}
+
 /// Display form, e.g. "Control+Shift+KeyS" -> "Ctrl+Shift+S", "PrintScreen" -> "PrtSc".
 pub fn display(hotkey: &str) -> String {
     let hotkey = hotkey.trim();

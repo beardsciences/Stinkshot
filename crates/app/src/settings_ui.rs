@@ -37,6 +37,7 @@ use crate::toast::ui_common as uc;
 const NAV_W: f32 = 220.0;
 const CONTENT_MAX_W: f32 = 760.0;
 const REPO_URL: &str = "https://code.mccullough.dev/christian/stinkshot";
+const ISSUES_URL: &str = "https://code.mccullough.dev/christian/stinkshot/issues";
 const DEFAULT_ACCENTS: [&str; 4] = ["#7fd36a", "#4cc2ff", "#ffb454", "#c49cff"];
 
 /// A page of the Settings window (`Command::OpenSettingsAt` opens one directly).
@@ -262,10 +263,55 @@ fn days_label(days: u32) -> String {
 
 fn gb_label(gb: f32) -> String {
     if gb <= 0.0 {
-        tr!("settings.history.no_cap").into()
+        tr!("settings.history.no_limit").into()
     } else {
         tr!("settings.history.gb", gb = format!("{gb:.1}"))
     }
+}
+
+/// Whether retention `new` (days, GB; 0 = no limit) deletes sooner than `old` in either
+/// limit. Such a change is staged for Apply instead of saved, because the background
+/// retention pass deletes for good.
+fn retention_tighter(old: (u32, f32), new: (u32, f32)) -> bool {
+    let days = new.0 > 0 && (old.0 == 0 || new.0 < old.0);
+    let size = new.1 > 0.0 && (old.1 <= 0.0 || new.1 < old.1);
+    days || size
+}
+
+/// The storage limit in bytes, as the retention pass computes it (0 = no limit).
+fn gb_to_bytes(gb: f32) -> u64 {
+    (gb.max(0.0) as f64 * 1024.0 * 1024.0 * 1024.0) as u64
+}
+
+/// The sentence under the retention rows while a tighter value waits for Apply.
+fn retention_pending_text(preview: &RetentionPreview) -> String {
+    match *preview {
+        RetentionPreview::Checking => tr!("settings.history.pending_checking").into(),
+        RetentionPreview::Failed => tr!("settings.history.pending_failed").into(),
+        RetentionPreview::Known(0, _) => tr!("settings.history.pending_none").into(),
+        RetentionPreview::Known(1, bytes) => {
+            tr!("settings.history.pending_one", size = uc::fmt_bytes(bytes))
+        }
+        RetentionPreview::Known(n, bytes) => tr!(
+            "settings.history.pending",
+            n = uc::fmt_thousands(u64::from(n)),
+            size = uc::fmt_bytes(bytes)
+        ),
+    }
+}
+
+/// Text of the problem banner on the Hotkeys page: the shell's sentences, except that
+/// several "used by another program" ones become a single line (each row repeats its own).
+fn hotkey_banner(errors: &[String]) -> String {
+    use crate::hotkeys::ErrorKind;
+    let in_use = |e: &&String| ErrorKind::of(e) == Some(ErrorKind::InUse);
+    let n = errors.iter().filter(in_use).count();
+    if n < 2 {
+        return errors.join("\n");
+    }
+    let mut lines = vec![tr!("settings.hotkeys.in_use_many", n = n)];
+    lines.extend(errors.iter().filter(|e| !in_use(e)).cloned());
+    lines.join("\n")
 }
 
 /// "Last checked 2 hours ago" style text from a UTC timestamp.
@@ -300,6 +346,23 @@ struct Devices {
     loaded: bool,
 }
 
+/// What applying a staged retention change would delete right now.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum RetentionPreview {
+    Checking,
+    /// Captures and bytes.
+    Known(u32, u64),
+    Failed,
+}
+
+/// Retention values tighter than the saved ones, waiting for Apply or Cancel.
+struct PendingRetention {
+    keep_days: u32,
+    max_gb: f32,
+    preview: RetentionPreview,
+    rx: Option<Receiver<Option<(u32, u64)>>>,
+}
+
 pub struct SettingsWindow {
     section: Section,
     hotkey_errors: Vec<String>,
@@ -324,6 +387,8 @@ pub struct SettingsWindow {
     search_scores: Vec<(Section, u32)>,
     /// A page asked to switch to another one (Privacy's History link).
     goto: Option<Section>,
+    /// Tighter Keep Captures For / Storage Limit values that are not saved yet.
+    retention: Option<PendingRetention>,
 }
 
 impl SettingsWindow {
@@ -353,6 +418,7 @@ impl SettingsWindow {
             search: String::new(),
             search_scores: Vec::new(),
             goto: None,
+            retention: None,
         }
     }
 
@@ -463,6 +529,32 @@ impl SettingsWindow {
         }) {
             self.folder_rx = Some(rx);
         }
+    }
+
+    /// Hold `(days, GB)` back until Apply and count, off the UI thread, what it would delete.
+    fn stage_retention(&mut self, ctx: &egui::Context, shared: &Shared, value: (u32, f32)) {
+        let (tx, rx) = channel();
+        let history = shared.history.clone();
+        let c = ctx.clone();
+        let (days, bytes) = (value.0, gb_to_bytes(value.1));
+        let started = uc::spawn_worker("retention-preview", move || {
+            let r = history.retention_preview(days, bytes);
+            if let Err(e) = &r {
+                log::warn!("retention preview: {e:#}");
+            }
+            let _ = tx.send(r.ok());
+            c.request_repaint();
+        });
+        self.retention = Some(PendingRetention {
+            keep_days: value.0,
+            max_gb: value.1,
+            preview: if started {
+                RetentionPreview::Checking
+            } else {
+                RetentionPreview::Failed
+            },
+            rx: started.then_some(rx),
+        });
     }
 
     fn apply_capture(&mut self, shared: &mut Shared, ctx: &egui::Context) -> bool {
@@ -1017,7 +1109,8 @@ fn group_title(ui: &mut Ui, p: &theme::Palette, text: &str) {
 }
 
 /// Single-line text field that edits a local buffer and returns the final text on Enter or
-/// focus loss. The buffer re-syncs from `current` whenever the field is not focused.
+/// focus loss, and when the window is closed while it is focused. The buffer re-syncs from
+/// `current` whenever the field is not focused.
 fn commit_text(ui: &mut Ui, id: &str, current: &str, width: f32, hint: &str) -> Option<String> {
     let te_id = ui.scope_id().with(("commit_text", id));
     let focused = ui.memory(|m| m.has_focus(te_id));
@@ -1034,7 +1127,8 @@ fn commit_text(ui: &mut Ui, id: &str, current: &str, width: f32, hint: &str) -> 
             .hint_text(hint.to_string()),
     );
     ui.data_mut(|d| d.insert_temp(te_id, buf.clone()));
-    if resp.lost_focus() { Some(buf) } else { None }
+    let closing = resp.has_focus() && ui.input(|i| i.viewport().close_requested());
+    (resp.lost_focus() || closing).then_some(buf)
 }
 
 /// Row of colour swatches; returns the clicked colour.
@@ -1075,15 +1169,13 @@ fn swatch_row(ui: &mut Ui, colors: &[String], selected: &str, ring: Color32) -> 
     picked
 }
 
-fn color_button(ui: &mut Ui, hex: &str) -> Option<String> {
+/// Color swatch that opens a picker: the new color when it was changed, and the swatch's
+/// response.
+fn color_button(ui: &mut Ui, hex: &str) -> (Option<String>, egui::Response) {
     let mut c = uc::hex_to_color(hex).unwrap_or(Color32::WHITE);
     let resp =
         egui::color_picker::color_edit_button_srgba(ui, &mut c, egui::color_picker::Alpha::Opaque);
-    if resp.changed() {
-        Some(uc::color_to_hex(c))
-    } else {
-        None
-    }
+    (resp.changed().then(|| uc::color_to_hex(c)), resp)
 }
 
 fn info_card(
@@ -1206,7 +1298,7 @@ impl SettingsWindow {
                 ui.horizontal(|ui| {
                     let presets: Vec<String> =
                         DEFAULT_ACCENTS.iter().map(|s| s.to_string()).collect();
-                    if let Some(h) = color_button(ui, &g.accent) {
+                    if let (Some(h), _) = color_button(ui, &g.accent) {
                         g.accent = h;
                     }
                     if let Some(h) = swatch_row(ui, &presets, &g.accent, p.text) {
@@ -1340,7 +1432,8 @@ impl SettingsWindow {
         if let Some(note) = snip_prtsc_note(&shared.config.hotkeys) {
             lines.push((note.to_string(), p.text_tertiary));
         }
-        if browsing {
+        // Nothing to say: no gap either, so the two rows read as one group.
+        if browsing && !lines.is_empty() {
             ui.add_space(2.0);
             // Indented to line up with the text inside the card above.
             ui.horizontal(|ui| {
@@ -1377,7 +1470,7 @@ impl SettingsWindow {
         }
         if browsing && !self.hotkey_errors.is_empty() {
             ui.add_space(4.0);
-            let text = self.hotkey_errors.join("\n");
+            let text = hotkey_banner(&self.hotkey_errors);
             let w = ui.available_width();
             let galley = ui
                 .painter()
@@ -1602,7 +1695,7 @@ impl SettingsWindow {
                 tr!("settings.capture.padding_color.desc"),
                 |ui| {
                     ui.horizontal(|ui| {
-                        if let Some(h) = color_button(ui, &c.window_padding_color) {
+                        if let (Some(h), _) = color_button(ui, &c.window_padding_color) {
                             c.window_padding_color = h;
                         }
                         if let Some(t) =
@@ -1699,6 +1792,7 @@ impl SettingsWindow {
         let p = uc::pal(shared);
         let accent = uc::accent(shared);
         let e = &mut shared.config.editor;
+        let defaults_before = (e.color.clone(), e.stroke_width);
         group_title(ui, p, tr!("settings.editor.defaults"));
         widgets::setting_row(
             ui,
@@ -1756,12 +1850,17 @@ impl SettingsWindow {
             |ui| {
                 ui.horizontal(|ui| {
                     for (i, hex) in e.palette.clone().iter().enumerate() {
-                        if let Some(h) = color_button(ui, hex) {
+                        let (changed, resp) = color_button(ui, hex);
+                        if let Some(h) = changed {
                             // Keep the default color in sync when its swatch is edited.
                             if e.color.eq_ignore_ascii_case(hex) {
                                 e.color = h.clone();
                             }
                             e.palette[i] = h;
+                        }
+                        // Right-click removes (the last color stays).
+                        if resp.secondary_clicked() && e.palette.len() > 1 {
+                            remove = Some(i);
                         }
                     }
                 });
@@ -1792,18 +1891,28 @@ impl SettingsWindow {
         if add {
             e.palette.push(uc::color_to_hex(accent));
         }
-        if let Some(i) = remove {
+        if let Some(i) = remove
+            && i < e.palette.len()
+        {
             e.palette.remove(i);
         }
         if reset {
             e.palette = Config::default().editor.palette;
-            if !e.palette.iter().any(|h| h.eq_ignore_ascii_case(&e.color)) {
-                e.color = e
-                    .palette
-                    .first()
-                    .cloned()
-                    .unwrap_or_else(|| "#ff8a3d".into());
-            }
+        }
+        // The starting color is always one of the palette's.
+        if (remove.is_some() || reset)
+            && !e.palette.iter().any(|h| h.eq_ignore_ascii_case(&e.color))
+        {
+            e.color = e
+                .palette
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "#ff8a3d".into());
+        }
+        // Each tool remembers the style it last used and would keep ignoring a new default,
+        // so a change here starts every tool over from it.
+        if defaults_before != (e.color.clone(), e.stroke_width) {
+            e.tool_styles.clear();
         }
     }
 
@@ -2044,51 +2153,90 @@ impl SettingsWindow {
             &ocr_desc,
             &mut shared.config.history.ocr_index,
         );
-        let h = &mut shared.config.history;
+        // A tighter limit makes the retention pass delete for good, so it is staged and
+        // only saved by Apply. A looser one saves at once.
+        let saved = (
+            shared.config.history.keep_days,
+            shared.config.history.max_gb,
+        );
+        let before = self
+            .retention
+            .as_ref()
+            .map_or(saved, |r| (r.keep_days, r.max_gb));
+        let mut shown = before;
         widgets::setting_row(
             ui,
             tr!("settings.history.keep"),
             tr!("settings.history.keep.desc"),
             |ui| {
-                ui.horizontal(|ui| {
-                    ui.add(
-                        egui::DragValue::new(&mut h.keep_days)
-                            .range(0..=3650)
-                            .speed(1.0)
-                            // Retention deletes files: never act on a half-typed number.
-                            .update_while_editing(false)
-                            .custom_formatter(|n, _| days_label(n as u32))
-                            .custom_parser(|s| {
-                                let t = s.trim().to_lowercase();
-                                if t.starts_with("forever") || t.starts_with("never") {
-                                    Some(0.0)
-                                } else {
-                                    t.split_whitespace()
-                                        .next()
-                                        .and_then(|n| n.parse::<f64>().ok())
-                                }
-                            }),
-                    );
-                    ui.add(
-                        egui::DragValue::new(&mut h.max_gb)
-                            .range(0.0..=2000.0)
-                            .speed(0.1)
-                            .update_while_editing(false)
-                            .custom_formatter(|n, _| gb_label(n as f32))
-                            .custom_parser(|s| {
-                                let t = s.trim().to_lowercase();
-                                if t.starts_with("no") {
-                                    Some(0.0)
-                                } else {
-                                    t.split_whitespace()
-                                        .next()
-                                        .and_then(|n| n.parse::<f64>().ok())
-                                }
-                            }),
-                    );
-                });
+                ui.add(
+                    egui::DragValue::new(&mut shown.0)
+                        .range(0..=3650)
+                        // Typed only: no speed means dragging and the arrow keys change
+                        // nothing (one ArrowUp on "Forever" used to mean 1 day).
+                        .speed(0.0)
+                        // Never act on a half-typed number.
+                        .update_while_editing(false)
+                        .custom_formatter(|n, _| days_label(n as u32))
+                        .custom_parser(|s| {
+                            let t = s.trim().to_lowercase();
+                            if t.starts_with("forever") || t.starts_with("never") {
+                                Some(0.0)
+                            } else {
+                                t.split_whitespace()
+                                    .next()
+                                    .and_then(|n| n.parse::<f64>().ok())
+                            }
+                        }),
+                )
+                .on_hover_cursor(egui::CursorIcon::Text);
             },
         );
+        widgets::setting_row(
+            ui,
+            tr!("settings.history.limit"),
+            tr!("settings.history.limit.desc"),
+            |ui| {
+                ui.add(
+                    egui::DragValue::new(&mut shown.1)
+                        .range(0.0..=2000.0)
+                        .speed(0.0)
+                        .update_while_editing(false)
+                        .custom_formatter(|n, _| gb_label(n as f32))
+                        .custom_parser(|s| {
+                            let t = s.trim().to_lowercase();
+                            if t.starts_with("no") {
+                                Some(0.0)
+                            } else {
+                                t.split_whitespace()
+                                    .next()
+                                    .and_then(|n| n.parse::<f64>().ok())
+                            }
+                        }),
+                )
+                .on_hover_cursor(egui::CursorIcon::Text);
+            },
+        );
+        if shown != before {
+            if retention_tighter(saved, shown) {
+                self.stage_retention(&ctx, shared, shown);
+            } else {
+                shared.config.history.keep_days = shown.0;
+                shared.config.history.max_gb = shown.1;
+                self.retention = None;
+            }
+        }
+        // While searching, the notice shows with either of its rows.
+        if search::row_visible(
+            tr!("settings.history.keep"),
+            tr!("settings.history.keep.desc"),
+        ) || search::row_visible(
+            tr!("settings.history.limit"),
+            tr!("settings.history.limit.desc"),
+        ) {
+            self.retention_pending(ui, shared);
+        }
+        let h = &mut shared.config.history;
         toggle_row(
             ui,
             tr!("settings.history.originals"),
@@ -2108,6 +2256,68 @@ impl SettingsWindow {
                 .size(12.0)
                 .color(p.text_tertiary),
             );
+        }
+    }
+
+    /// Under the retention rows while a tighter value is staged: what it would delete now,
+    /// with Apply (saves it; the retention pass then deletes) and Cancel.
+    fn retention_pending(&mut self, ui: &mut Ui, shared: &mut Shared) {
+        let Some(r) = &mut self.retention else {
+            return;
+        };
+        if let Some(rx) = &r.rx {
+            match rx.try_recv() {
+                Ok(found) => {
+                    r.preview = found.map_or(RetentionPreview::Failed, |(n, bytes)| {
+                        RetentionPreview::Known(n, bytes)
+                    });
+                    r.rx = None;
+                }
+                Err(TryRecvError::Disconnected) => {
+                    r.preview = RetentionPreview::Failed;
+                    r.rx = None;
+                }
+                Err(TryRecvError::Empty) => {
+                    ui.ctx().request_repaint_after(Duration::from_millis(100));
+                }
+            }
+        }
+        let p = uc::pal(shared);
+        let checking = r.preview == RetentionPreview::Checking;
+        let text = retention_pending_text(&r.preview);
+        let value = (r.keep_days, r.max_gb);
+        let (mut apply, mut cancel) = (false, false);
+        egui::Frame::new()
+            .fill(uc::with_alpha(p.danger, 28))
+            .stroke(Stroke::new(1.0, uc::with_alpha(p.danger, 110)))
+            .corner_radius(CornerRadius::same(8))
+            .inner_margin(egui::Margin::symmetric(18, 12))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal_wrapped(|ui| {
+                    if checking {
+                        ui.add(egui::Spinner::new().size(14.0));
+                    }
+                    ui.label(RichText::new(text).size(13.0).color(p.text));
+                });
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    // Apply waits for the count, so it is never pressed blind.
+                    apply = ui
+                        .add_enabled_ui(!checking, |ui| {
+                            widgets::button(ui, tr!("settings.history.apply"))
+                        })
+                        .inner
+                        .clicked();
+                    cancel = widgets::button(ui, tr!("settings.history.cancel")).clicked();
+                });
+            });
+        if apply {
+            shared.config.history.keep_days = value.0;
+            shared.config.history.max_gb = value.1;
+        }
+        if apply || cancel {
+            self.retention = None;
         }
     }
 
@@ -2370,11 +2580,26 @@ impl SettingsWindow {
                 title: tr!("settings.about.log_failed").into(),
                 // No LOG_HINT here: it would point back at this button.
                 body: {
-                    log::warn!("open log: {e:#}");
+                    log::warn!("show log: {e:#}");
                     tr!("settings.about.log_failed.body").into()
                 },
                 error: true,
             });
+        }
+        let mut report = false;
+        widgets::setting_row(
+            ui,
+            tr!("settings.about.report"),
+            tr!("settings.about.report.desc"),
+            |ui| {
+                if widgets::button(ui, tr!("settings.about.report.open")).clicked() {
+                    report = true;
+                }
+            },
+        );
+        // The browser opens the page; Stinkshot itself requests nothing.
+        if report {
+            shared.outbox.push(Command::OpenUrl(ISSUES_URL.into()));
         }
         widgets::setting_row(
             ui,
@@ -2492,17 +2717,77 @@ mod tests {
         assert_eq!(o.len(), 3);
         assert_eq!(o[0].0, "");
         let o = device_options(&detected, "USB Mic");
-        assert_eq!(o.last().map(|x| x.1.as_str()), Some("USB Mic (not found)"));
+        assert_eq!(o.last().map(|x| x.1.as_str()), Some("USB Mic (Not Found)"));
         assert_eq!(device_options(&[], "").len(), 1);
     }
 
     #[test]
     fn retention_labels() {
         assert_eq!(days_label(0), "Forever");
-        assert_eq!(days_label(1), "1 day");
-        assert_eq!(days_label(90), "90 days");
-        assert_eq!(gb_label(0.0), "No Cap");
+        assert_eq!(days_label(1), "1 Day");
+        assert_eq!(days_label(90), "90 Days");
+        assert_eq!(gb_label(0.0), "No Limit");
         assert_eq!(gb_label(5.0), "5.0 GB");
+    }
+
+    #[test]
+    fn only_tighter_retention_is_staged() {
+        // Days: 0 is Forever, so any number is tighter than it and fewer days are tighter.
+        assert!(retention_tighter((0, 0.0), (1, 0.0)));
+        assert!(retention_tighter((30, 0.0), (7, 0.0)));
+        assert!(!retention_tighter((30, 0.0), (90, 0.0)));
+        assert!(!retention_tighter((30, 0.0), (0, 0.0)));
+        // Size: 0 is No Limit.
+        assert!(retention_tighter((0, 0.0), (0, 5.0)));
+        assert!(retention_tighter((0, 10.0), (0, 5.0)));
+        assert!(!retention_tighter((0, 5.0), (0, 10.0)));
+        assert!(!retention_tighter((0, 5.0), (0, 0.0)));
+        // One limit looser does not excuse the other being tighter.
+        assert!(retention_tighter((30, 5.0), (90, 1.0)));
+        assert!(!retention_tighter((30, 5.0), (30, 5.0)));
+        assert_eq!(gb_to_bytes(1.0), 1 << 30);
+        assert_eq!(gb_to_bytes(-1.0), 0);
+    }
+
+    #[test]
+    fn retention_pending_wording() {
+        let many = retention_pending_text(&RetentionPreview::Known(1200, 3 << 30));
+        assert!(many.starts_with("Applying this permanently deletes 1,200 captures ("));
+        let one = retention_pending_text(&RetentionPreview::Known(1, 1 << 20));
+        assert!(one.contains("deletes 1 capture ("), "{one}");
+        assert_eq!(
+            retention_pending_text(&RetentionPreview::Known(0, 0)),
+            "Nothing would be deleted right now."
+        );
+    }
+
+    #[test]
+    fn several_hotkeys_in_use_share_one_banner_line() {
+        let in_use = |key: &str| {
+            tr!(
+                "shell.hotkey.in_use",
+                key = key,
+                action = "Region",
+                phrase = tr!("shell.hotkey.phrase.in_use")
+            )
+        };
+        let invalid = tr!(
+            "shell.hotkey.invalid",
+            key = "Ctrl+F9",
+            action = "Full Screen",
+            phrase = tr!("shell.hotkey.phrase.invalid")
+        );
+        // One: the shell's own sentence.
+        let one = vec![in_use("Ctrl+F1"), invalid.clone()];
+        assert_eq!(hotkey_banner(&one), one.join("\n"));
+        let many = vec![in_use("Ctrl+F1"), invalid.clone(), in_use("Ctrl+F2")];
+        assert_eq!(
+            hotkey_banner(&many),
+            format!(
+                "2 hotkeys are already used by another program. Close it or pick other keys below.\n{invalid}"
+            )
+        );
+        assert_eq!(hotkey_banner(&[]), "");
     }
 
     #[test]
@@ -2559,7 +2844,7 @@ mod tests {
         for f in HOTKEY_FIELDS {
             f.hotkey_mut(&mut h).clear();
         }
-        assert!(snip_prtsc_note(&h).is_some_and(|n| n.contains("PrtSc isn't bound")));
+        assert!(snip_prtsc_note(&h).is_some_and(|n| n.contains("No hotkey uses PrtSc")));
         h.replace_snipping_tool = false;
         assert_eq!(snip_prtsc_note(&h), None);
         assert_eq!(

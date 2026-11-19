@@ -77,6 +77,8 @@ pub const PIN: Chord = Chord::ctrl(Key::P, "Ctrl+P");
 pub const COPY_TEXT: Chord = Chord::ctrl(Key::T, "Ctrl+T");
 /// Find Sensitive Info (Smart Redact): R for redact.
 pub const FIND_SENSITIVE: Chord = Chord::ctrl(Key::R, "Ctrl+R");
+/// Shortcuts that also work while typing a text: the text is kept, then they run.
+pub const FINISH_WHILE_TYPING: [Chord; 4] = [SAVE, PIN, COPY_TEXT, FIND_SENSITIVE];
 pub const UNDO: Chord = Chord::ctrl(Key::Z, "Ctrl+Z");
 pub const REDO: Chord = Chord::ctrl(Key::Y, "Ctrl+Y");
 pub const COPY_COLOR: Chord = Chord::plain(Key::C, "C");

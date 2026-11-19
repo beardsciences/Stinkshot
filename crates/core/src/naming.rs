@@ -63,7 +63,15 @@ pub fn expand_pattern(pattern: &str, parts: &NameParts) -> String {
     finalize_stem(&out)
 }
 
-/// `folder/<expanded>.<ext>`, appending " (2)", " (3)"... if the file exists.
+/// Names `unique_path` has handed out whose files are not written yet (lowercased paths).
+/// The caller writes the file after this returns, often a while after (an export), so
+/// "does not exist" alone lets two saves in the same second pick the same name and one
+/// overwrite the other.
+static RESERVED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// `folder/<expanded>.<ext>`, appending " (2)", " (3)"... if the file exists or the name
+/// was already given to another caller in this process. Choosing and reserving happen under
+/// one lock.
 pub fn unique_path(folder: &Path, pattern: &str, parts: &NameParts, ext: &str) -> PathBuf {
     let stem = expand_pattern(pattern, parts);
     let ext = ext.trim_start_matches('.');
@@ -74,13 +82,17 @@ pub fn unique_path(folder: &Path, pattern: &str, parts: &NameParts, ext: &str) -
             folder.join(format!("{s}.{ext}"))
         }
     };
-    let first = make(&stem);
-    if !first.exists() {
-        return first;
-    }
-    for n in 2..10_000u32 {
-        let p = make(&format!("{stem} ({n})"));
-        if !p.exists() {
+    let key = |p: &Path| p.to_string_lossy().to_lowercase();
+    let mut reserved = RESERVED.lock().unwrap_or_else(|e| e.into_inner());
+    // A reserved name whose file now exists is covered by the check on disk. One whose
+    // save failed stays until the process ends, which only costs that name.
+    reserved.retain(|p| !Path::new(p).exists());
+    let candidates =
+        std::iter::once(make(&stem)).chain((2..10_000u32).map(|n| make(&format!("{stem} ({n})"))));
+    for p in candidates {
+        let k = key(&p);
+        if !p.exists() && !reserved.contains(&k) {
+            reserved.push(k);
             return p;
         }
     }
@@ -124,14 +136,23 @@ fn finalize_stem(s: &str) -> String {
     if stem.is_empty() {
         return FALLBACK_STEM.to_string();
     }
-    let base = stem.split('.').next().unwrap_or("").to_ascii_uppercase();
+    // Windows decides on the part before the first dot, ignoring spaces after it:
+    // "CON.txt - Notepad" is the console as much as "CON" is.
+    let base = stem
+        .split('.')
+        .next()
+        .unwrap_or("")
+        .trim_end()
+        .to_ascii_uppercase();
     let reserved = matches!(base.as_str(), "CON" | "PRN" | "AUX" | "NUL")
         || (base.len() == 4
             && (base.starts_with("COM") || base.starts_with("LPT"))
             && base.as_bytes()[3].is_ascii_digit()
             && base.as_bytes()[3] != b'0');
     if reserved {
-        stem.push('_');
+        // Right after the device name, so that part itself is no longer one. `base` is
+        // ASCII here, so its length is a char boundary in `stem`.
+        stem.insert(base.len(), '_');
     }
     stem
 }
@@ -213,6 +234,47 @@ mod tests {
         assert_eq!(expand_pattern("COM1", &parts("", "")), "COM1_");
         assert_eq!(expand_pattern("COM0", &parts("", "")), "COM0");
         assert_eq!(expand_pattern("shot...", &parts("", "")), "shot");
+        // A dot after the device name does not make it a file: the underscore goes into
+        // the name itself.
+        assert_eq!(
+            expand_pattern("{title}", &parts("", "CON.txt - Notepad")),
+            "CON_.txt - Notepad"
+        );
+        assert_eq!(expand_pattern("nul .2026", &parts("", "")), "nul_ .2026");
+        assert_eq!(expand_pattern("lpt9.a.b", &parts("", "")), "lpt9_.a.b");
+        assert_eq!(expand_pattern("console.txt", &parts("", "")), "console.txt");
+    }
+
+    #[test]
+    fn two_saves_in_the_same_second_get_different_names() {
+        let dir = std::env::temp_dir().join(format!("stinkshot-core-race-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = parts("", "");
+        // Neither file is written yet when the second name is asked for.
+        let a = unique_path(&dir, "same", &p, "png");
+        let b = unique_path(&dir, "same", &p, "png");
+        assert_eq!(a, dir.join("same.png"));
+        assert_eq!(b, dir.join("same (2).png"));
+        // From several threads at once: every name is different.
+        let names: Vec<PathBuf> = std::thread::scope(|s| {
+            let hs: Vec<_> = (0..8)
+                .map(|_| s.spawn(|| unique_path(&dir, "burst", &parts("", ""), "png")))
+                .collect();
+            hs.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+        let mut unique = names.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), names.len());
+        // Once a file exists, the name on disk is what counts.
+        std::fs::write(&a, b"x").unwrap();
+        std::fs::write(&b, b"x").unwrap();
+        assert_eq!(
+            unique_path(&dir, "same", &p, "png"),
+            dir.join("same (3).png")
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

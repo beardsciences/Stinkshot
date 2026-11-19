@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
 use windows::Win32::Media::MediaFoundation::*;
@@ -74,6 +74,9 @@ impl Webcam {
                         log::warn!("webcam stopped: {msg}");
                     }
                 }
+                // No more frames (unplugged, failed or stopped): without this the bubble
+                // would show the last picture, frozen, for the rest of the recording.
+                clear_latest(&latest);
             })
             .context("spawn webcam thread")?;
         match rx.recv_timeout(Duration::from_secs(15)) {
@@ -93,13 +96,30 @@ impl Webcam {
     }
 }
 
+/// How long `Drop` waits for the reader thread: a camera driver can keep `ReadSample`
+/// blocked indefinitely, and stopping the recording must not hang on it.
+const JOIN_LIMIT: Duration = Duration::from_secs(2);
+
 impl Drop for Webcam {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
         if let Some(h) = self.handle.take() {
+            let end = Instant::now() + JOIN_LIMIT;
+            while !h.is_finished() {
+                if Instant::now() >= end {
+                    // Left detached; it exits when the driver call returns.
+                    log::warn!("webcam reader still busy after {JOIN_LIMIT:?}; not waiting");
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
             let _ = h.join();
         }
     }
+}
+
+fn clear_latest(latest: &Mutex<Option<WebcamFrame>>) {
+    *latest.lock().unwrap_or_else(|p| p.into_inner()) = None;
 }
 
 fn run(

@@ -4,9 +4,17 @@
 //! physical pixels), never screen or egui points.
 //!
 //! Re-edit storage for a saved capture `C:\..\Shot.png`:
-//!   - `Shot.png`                          flattened result (what the user sees in the folder)
-//!   - `<folder>\.stinkshot\edit\<stem>.json` the `Doc`
-//!   - `<folder>\.stinkshot\edit\<stem>.base.png` the unannotated original
+//!   - `Shot.png`                                   flattened result (what the user sees in
+//!     the folder)
+//!   - `<folder>\.stinkshot\edit\Shot.png.json`     the `Doc`: the shapes still editable
+//!   - `<folder>\.stinkshot\edit\Shot.png.base.png` the picture those shapes are drawn on
+//!
+//! The sidecar holds nothing that `Shot.png` hides. The stored base is the capture with
+//! every Blur, Pixelate and Redact applied. When one of those covers another shape (text,
+//! a pasted picture, the pointer), that shape, the cover and everything below the cover
+//! are drawn into the stored base and leave the doc: they are no longer editable, and
+//! neither their pixels nor their text are stored anywhere else. Shapes above the topmost
+//! such cover stay in the doc as they are, with their text and pictures in clear.
 //!
 //! `save_editable` / `load_editable` / `delete_editable` own this layout.
 
@@ -1171,9 +1179,10 @@ fn sidecar_is_stale(flat_path: &Path, json_path: &Path) -> bool {
         .is_ok_and(|d| d > std::time::Duration::from_secs(2))
 }
 
-/// The base with every destructive shape (Blur, Pixelate, Redact) already applied: what an
-/// edit sidecar stores, so the pixels a redaction hides never reach the disk. The shapes stay
-/// in the doc as editable objects; moving or deleting one later leaves its old spot redacted.
+/// The base with every destructive shape (Blur, Pixelate, Redact) already applied, so the
+/// capture pixels a redaction hides never reach the disk. The shapes stay in the doc as
+/// editable objects; moving or deleting one later leaves its old spot redacted. An edit
+/// sidecar stores this, or more when a redaction covers another shape (see `stored_form`).
 pub fn bake_destructive(base: &Rgba, doc: &Doc) -> Rgba {
     let mut out = base.clone();
     let shapes: Vec<&Shape> = doc.shapes.iter().collect();
@@ -1181,22 +1190,99 @@ pub fn bake_destructive(base: &Rgba, doc: &Doc) -> Rgba {
     out
 }
 
-/// Write the edit sidecar. The stored base has the destructive shapes baked in (see
-/// [`bake_destructive`]), so a redacted secret is not recoverable from the history folder.
-pub fn save_editable(flat_path: &Path, base: &Rgba, doc: &Doc) -> anyhow::Result<()> {
-    let (json_path, base_path) = sidecar_paths(flat_path)
-        .with_context(|| format!("bad capture path {}", flat_path.display()))?;
-    let baked = bake_destructive(base, doc);
-    let png = baked.to_png().context("encoding base image")?;
+/// Fonts for flattening covered shapes into a stored base. Loaded once, on first need:
+/// most saves have nothing covered and never ask.
+fn sidecar_fonts() -> anyhow::Result<&'static Fonts> {
+    static FONTS: std::sync::OnceLock<Option<Fonts>> = std::sync::OnceLock::new();
+    FONTS
+        .get_or_init(|| {
+            Fonts::load_system()
+                .inspect_err(|e| log::warn!("no fonts for edit sidecars: {e:#}"))
+                .ok()
+        })
+        .as_ref()
+        .context("no fonts to flatten covered shapes with")
+}
+
+/// What an edit sidecar stores for `(base, doc)`: nothing the rendered picture hides.
+///
+/// Without a covered shape that is the base with the destructive shapes applied
+/// ([`bake_destructive`]) and the doc unchanged. With one, every shape up to the topmost
+/// destructive shape that covers another shape is rendered into the base and dropped from
+/// the doc, so a pasted picture, the pointer or text under a Blur, Pixelate or Redact is
+/// kept only as the pixels the output shows. Spotlights are rendered in with them
+/// (dimming goes under all shapes, so it cannot stay behind as an object once shapes are
+/// pixels). Rendering the stored pair gives the same picture as rendering `(base, doc)`,
+/// except that a magnifier left in the doc now also shows the flattened shapes.
+fn stored_form(base: &Rgba, doc: &Doc) -> anyhow::Result<(Rgba, Doc)> {
+    let shapes: Vec<&Shape> = doc.shapes.iter().collect();
+    let flattens = |s: &Shape| {
+        render::is_destructive(&s.kind) || matches!(s.kind, ShapeKind::Spotlight { .. })
+    };
+    // Fonts (for text bounds) are only needed when a destructive shape has anything at
+    // all drawn before it.
+    let may_cover = shapes
+        .iter()
+        .enumerate()
+        .any(|(i, s)| render::is_destructive(&s.kind) && shapes[..i].iter().any(|u| !flattens(u)));
+    let cut = if may_cover {
+        let fonts = sidecar_fonts()?;
+        (0..shapes.len())
+            .rev()
+            .find(|&i| render::covers_a_shape(&shapes, i, fonts))
+            .map(|i| (i, fonts))
+    } else {
+        None
+    };
+    let mut stored = doc.clone();
+    let stored_base = match cut {
+        None => bake_destructive(base, doc),
+        Some((cut, fonts)) => {
+            // Destructive shapes above the cut are applied as always and stay in the doc.
+            let flat: Vec<&Shape> = shapes
+                .iter()
+                .enumerate()
+                .filter(|(i, s)| *i <= cut || flattens(s))
+                .map(|(_, s)| *s)
+                .collect();
+            stored.shapes = doc
+                .shapes
+                .iter()
+                .enumerate()
+                .filter(|(i, s)| *i > cut && !matches!(s.kind, ShapeKind::Spotlight { .. }))
+                .map(|(_, s)| s.clone())
+                .collect();
+            render::render_shapes(base, &flat, &doc.baked, fonts, false)
+        }
+    };
     // The stored base now holds every destructive shape; say so, or the next save would
     // apply them a second time.
-    let mut stored = doc.clone();
-    stored.baked = doc
+    stored.baked = stored
         .shapes
         .iter()
         .filter(|s| render::is_destructive(&s.kind))
         .cloned()
         .collect();
+    Ok((stored_base, stored))
+}
+
+/// Write the edit sidecar: the doc and the picture it is drawn on, in the form
+/// [`stored_form`] gives them. A redacted, blurred or pixelated secret is not recoverable
+/// from the history folder, whether it was in the capture or in a shape (pasted picture,
+/// pointer, text) under the redaction. Shapes that nothing covers are stored as they are.
+/// When that form cannot be made, no sidecar is left for this file at all.
+pub fn save_editable(flat_path: &Path, base: &Rgba, doc: &Doc) -> anyhow::Result<()> {
+    let (json_path, base_path) = sidecar_paths(flat_path)
+        .with_context(|| format!("bad capture path {}", flat_path.display()))?;
+    let (stored_base, stored) = match stored_form(base, doc) {
+        Ok(v) => v,
+        Err(e) => {
+            // An earlier sidecar of this file would not match the picture any more.
+            let _ = delete_editable(flat_path);
+            return Err(e);
+        }
+    };
+    let png = stored_base.to_png().context("encoding base image")?;
     let json = stored.to_json().context("serializing annotations")?;
     // Base first: a doc without its base is useless, a base without a doc is ignored.
     crate::image::write_atomic(&base_path, &png)?;

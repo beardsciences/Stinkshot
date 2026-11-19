@@ -37,6 +37,13 @@ fn main() {
         return;
     }
 
+    // The DLLs the exe imports are looked up in System32 only (0x800 is
+    // LOAD_LIBRARY_SEARCH_SYSTEM32), not next to a portable exe. `src/main.rs` does the
+    // same for DLLs loaded at runtime.
+    if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
+        println!("cargo:rustc-link-arg-bins=/DEPENDENTLOADFLAG:0x800");
+    }
+
     let ico_path = out_dir.join("stinkshot.ico");
     std::fs::write(&ico_path, stinkshot_logo::ico_from(&frames)).expect("write generated icon");
 

@@ -331,7 +331,8 @@ impl Act {
             Act::AddToCanvas => tr!("history.act.add_to_canvas"),
             Act::CopyImage => tr!("history.act.copy_image"),
             Act::CopyText => tr!("history.act.copy_text"),
-            Act::Open => tr!("history.act.open"),
+            Act::Open if m.kind == ItemKind::Image => tr!("history.act.open"),
+            Act::Open => tr!("history.act.play"),
             Act::Reveal => tr!("history.act.reveal"),
             Act::ToggleStar => {
                 if m.starred {
@@ -538,6 +539,12 @@ pub struct HistoryWindow {
     /// changed in Settings and everything keyed by item id is stale.
     worker_history: Option<Arc<History>>,
     scroll_to: Option<ItemId>,
+    /// The filter, date range or search changed: show the new results from the top.
+    scroll_top: bool,
+    /// A grid card had keyboard focus last frame (grid shortcuts are its own then).
+    grid_focus: bool,
+    /// The delete dialog opened this frame: the Enter that opened it must not confirm it.
+    confirm_fresh: bool,
     focus_search: bool,
     was_focused: bool,
     cols: usize,
@@ -574,6 +581,9 @@ impl HistoryWindow {
             worker: None,
             worker_history: None,
             scroll_to: None,
+            scroll_top: false,
+            grid_focus: false,
+            confirm_fresh: false,
             focus_search: false,
             was_focused: true,
             cols: 3,
@@ -694,6 +704,7 @@ impl HistoryWindow {
         self.date = DateFilter::Any;
         self.limit = PAGE;
         self.dirty = true;
+        self.scroll_top = true;
     }
 
     fn pump_thumbs(&mut self, ctx: &egui::Context) {
@@ -736,7 +747,10 @@ impl HistoryWindow {
             return;
         }
         match act {
-            Act::Delete => self.confirm_delete = Some(id),
+            Act::Delete => {
+                self.confirm_delete = Some(id);
+                self.confirm_fresh = true;
+            }
             Act::ToggleStar => {
                 let starred = !meta.starred;
                 self.items[idx].starred = starred;
@@ -832,6 +846,7 @@ impl Surface for HistoryWindow {
             self.applied_search = text;
             self.limit = PAGE;
             self.dirty = true;
+            self.scroll_top = true;
         }
         if let Some(rem) = self.debounce.remaining(now_i) {
             ctx.request_repaint_after(rem);
@@ -861,6 +876,9 @@ impl Surface for HistoryWindow {
 
         // Keyboard (not while typing in the search box or a dialog).
         let typing = ctx.egui_wants_keyboard_input();
+        // Grid shortcuts only while the grid has the keyboard: a focused button or dropdown
+        // keeps its own Enter and arrows instead of also acting on the selected capture.
+        let grid_keys = !typing && (self.grid_focus || ctx.memory(|m| m.focused().is_none()));
         let mut close_by_esc = false;
         let mut want_act: Option<(Act, ItemId)> = None;
         // Ctrl+, opens Settings (the Windows convention), also while typing in the search box.
@@ -876,7 +894,7 @@ impl Surface for HistoryWindow {
             if cmd_f {
                 self.focus_search = true;
             }
-            if !typing {
+            if grid_keys {
                 let nav = ctx.input(|i| {
                     [
                         (Key::ArrowLeft, Nav::Left),
@@ -949,6 +967,8 @@ impl Surface for HistoryWindow {
         let load_error = self.load_error.clone();
         let selected = self.selected;
         let scroll_to = self.scroll_to.take();
+        let scroll_top = std::mem::take(&mut self.scroll_top);
+        let mut grid_focus = false;
         let date = self.date;
         let more = self.more;
         let applied = self.applied_search.clone();
@@ -1082,13 +1102,16 @@ impl Surface for HistoryWindow {
                 new_filter = Some(Filter::Recordings);
             }
             y += 14.0;
-            ui.painter().text(
-                pos2(sidebar.left() + 22.0, y),
-                Align2::LEFT_TOP,
-                tr!("history.nav.source_app"),
-                uc::font(12.0),
-                p.text_tertiary,
-            );
+            // No heading over an empty list.
+            if !apps.is_empty() {
+                ui.painter().text(
+                    pos2(sidebar.left() + 22.0, y),
+                    Align2::LEFT_TOP,
+                    tr!("history.nav.source_app"),
+                    uc::font(12.0),
+                    p.text_tertiary,
+                );
+            }
             y += 24.0;
 
             // Footer first so the app list knows how much room it has.
@@ -1192,11 +1215,21 @@ impl Surface for HistoryWindow {
                                 ui.painter()
                                     .rect_filled(r, CornerRadius::same(6), hover_fill);
                             }
-                            ui.painter().text(
-                                pos2(r.left() + 12.0, r.center().y),
-                                Align2::LEFT_CENTER,
+                            // One line with an ellipsis, clear of the count (as `nav_row`).
+                            let mut job = egui::text::LayoutJob::single_section(
                                 pretty_app(name),
-                                uc::font(13.0),
+                                egui::TextFormat::simple(uc::font(13.0), p.text),
+                            );
+                            job.wrap = egui::text::TextWrapping {
+                                max_width: r.width() - 20.0 - 52.0,
+                                max_rows: 1,
+                                break_anywhere: true,
+                                overflow_character: Some('\u{2026}'),
+                            };
+                            let g = ui.painter().layout_job(job);
+                            ui.painter().galley(
+                                pos2(r.left() + 12.0, r.center().y - g.size().y / 2.0),
+                                g,
                                 p.text,
                             );
                             ui.painter().text(
@@ -1519,211 +1552,205 @@ impl Surface for HistoryWindow {
             } else {
                 let now_local = now;
                 ui.scope_builder(UiBuilder::new().max_rect(grid_rect), |ui| {
-                    ScrollArea::vertical()
+                    let mut grid = ScrollArea::vertical()
                         .id_salt("hist_grid")
-                        .auto_shrink([false, false])
-                        .show_viewport(ui, |ui, viewport| {
-                            let avail_w = ui.available_width();
-                            let (cols, card_w) = grid_layout(avail_w, MIN_CARD_W, GAP);
-                            cols_out = cols;
-                            let nrows = items.len().div_ceil(cols);
-                            let pitch = CARD_H + GAP;
-                            let total_h = nrows as f32 * pitch;
-                            let (full, _) =
-                                ui.allocate_exact_size(vec2(avail_w, total_h), Sense::hover());
-                            let cell = |i: usize| {
-                                let (row, col) = (i / cols, i % cols);
-                                Rect::from_min_size(
-                                    full.min
-                                        + vec2(col as f32 * (card_w + GAP), row as f32 * pitch),
-                                    vec2(card_w, CARD_H),
-                                )
-                            };
-                            if let Some(id) = scroll_to
-                                && let Some(i) = items.iter().position(|m| m.id == id)
-                            {
-                                ui.scroll_to_rect(cell(i).expand(GAP / 2.0), None);
-                            }
-                            let rows =
-                                visible_rows(viewport.min.y, viewport.height(), pitch, nrows, 1);
-                            if rows.end >= nrows.saturating_sub(1) && more {
-                                want_more = true;
-                            }
-                            let mut room = queue_room;
-                            for row in rows {
-                                for col in 0..cols {
-                                    let i = row * cols + col;
-                                    let Some(m) = items.get(i) else { break };
-                                    let r = cell(i);
-                                    if !ui.is_rect_visible(r) {
-                                        continue;
-                                    }
-                                    let key = ThumbKey {
-                                        id: m.id,
-                                        bytes: m.bytes,
-                                    };
-                                    let tex = textures.get(&key).map(|t| (t.id(), t.size()));
-                                    if tex.is_none()
-                                        && !requested.contains(&key)
-                                        && !failed.contains(&key)
-                                        && m.kind != ItemKind::Video
-                                        && room > 0
-                                    {
-                                        to_request.push(key);
-                                        room -= 1;
-                                    }
-                                    let resp = ui.interact(
-                                        r,
-                                        ui.scope_id().with(("hist_card", m.id)),
+                        .auto_shrink([false, false]);
+                    if scroll_top {
+                        grid = grid.vertical_scroll_offset(0.0);
+                    }
+                    grid.show_viewport(ui, |ui, viewport| {
+                        let avail_w = ui.available_width();
+                        let (cols, card_w) = grid_layout(avail_w, MIN_CARD_W, GAP);
+                        cols_out = cols;
+                        let nrows = items.len().div_ceil(cols);
+                        let pitch = CARD_H + GAP;
+                        let total_h = nrows as f32 * pitch;
+                        let (full, _) =
+                            ui.allocate_exact_size(vec2(avail_w, total_h), Sense::hover());
+                        let cell = |i: usize| {
+                            let (row, col) = (i / cols, i % cols);
+                            Rect::from_min_size(
+                                full.min + vec2(col as f32 * (card_w + GAP), row as f32 * pitch),
+                                vec2(card_w, CARD_H),
+                            )
+                        };
+                        if let Some(id) = scroll_to
+                            && let Some(i) = items.iter().position(|m| m.id == id)
+                        {
+                            ui.scroll_to_rect(cell(i).expand(GAP / 2.0), None);
+                        }
+                        let rows = visible_rows(viewport.min.y, viewport.height(), pitch, nrows, 1);
+                        if rows.end >= nrows.saturating_sub(1) && more {
+                            want_more = true;
+                        }
+                        let mut room = queue_room;
+                        for row in rows {
+                            for col in 0..cols {
+                                let i = row * cols + col;
+                                let Some(m) = items.get(i) else { break };
+                                let r = cell(i);
+                                if !ui.is_rect_visible(r) {
+                                    continue;
+                                }
+                                let key = ThumbKey {
+                                    id: m.id,
+                                    bytes: m.bytes,
+                                };
+                                let tex = textures.get(&key).map(|t| (t.id(), t.size()));
+                                // Videos too: one is stored when the recording is
+                                // saved, and a missing one just fails once.
+                                if tex.is_none()
+                                    && !requested.contains(&key)
+                                    && !failed.contains(&key)
+                                    && room > 0
+                                {
+                                    to_request.push(key);
+                                    room -= 1;
+                                }
+                                let resp = ui.interact(
+                                    r,
+                                    ui.scope_id().with(("hist_card", m.id)),
+                                    Sense::click(),
+                                );
+                                crate::a11y::describe_with(
+                                    &resp,
+                                    egui::accesskit::Role::ListBoxOption,
+                                    Some(selected == Some(m.id)),
+                                    || crate::a11y::item_name(m),
+                                );
+                                grid_focus |= resp.has_focus();
+                                // The star and trash buttons sit on top of the card and
+                                // take its hover, so `resp.hovered()` alone goes false
+                                // over them; the buttons would hide, the card would get
+                                // the hover back and they'd flash every frame.
+                                let hovered = resp.hovered() || ui.rect_contains_pointer(r);
+                                paint_card(
+                                    ui,
+                                    r,
+                                    m,
+                                    tex,
+                                    p,
+                                    accent,
+                                    selected == Some(m.id),
+                                    hovered,
+                                    now_local,
+                                    failed.contains(&key),
+                                );
+                                // Star button.
+                                let star_r = Rect::from_center_size(
+                                    pos2(r.right() - 24.0, r.top() + 24.0),
+                                    vec2(30.0, 30.0),
+                                );
+                                if m.starred || hovered {
+                                    let sresp = ui.interact(
+                                        star_r,
+                                        ui.scope_id().with(("hist_star", m.id)),
                                         Sense::click(),
                                     );
-                                    crate::a11y::describe_with(
-                                        &resp,
-                                        egui::accesskit::Role::ListBoxOption,
-                                        Some(selected == Some(m.id)),
-                                        || crate::a11y::item_name(m),
-                                    );
-                                    // The star and trash buttons sit on top of the card and
-                                    // take its hover, so `resp.hovered()` alone goes false
-                                    // over them; the buttons would hide, the card would get
-                                    // the hover back and they'd flash every frame.
-                                    let hovered = resp.hovered() || ui.rect_contains_pointer(r);
-                                    paint_card(
-                                        ui,
-                                        r,
-                                        m,
-                                        tex,
-                                        p,
-                                        accent,
-                                        selected == Some(m.id),
-                                        hovered,
-                                        now_local,
-                                        failed.contains(&key),
-                                    );
-                                    // Star button.
-                                    let star_r = Rect::from_center_size(
-                                        pos2(r.right() - 24.0, r.top() + 24.0),
-                                        vec2(30.0, 30.0),
-                                    );
-                                    if m.starred || hovered {
-                                        let sresp = ui.interact(
-                                            star_r,
-                                            ui.scope_id().with(("hist_star", m.id)),
-                                            Sense::click(),
-                                        );
-                                        let (icon, col) = if m.starred {
-                                            (Icon::StarFilled, STAR_COLOR)
-                                        } else {
-                                            (
-                                                Icon::Star,
-                                                Color32::from_white_alpha(if sresp.hovered() {
-                                                    255
-                                                } else {
-                                                    215
-                                                }),
-                                            )
-                                        };
-                                        ui.painter().circle_filled(
-                                            star_r.center(),
-                                            15.0,
-                                            Color32::from_black_alpha(if sresp.hovered() {
-                                                235
-                                            } else {
-                                                205
-                                            }),
-                                        );
-                                        widgets::paint_icon(
-                                            ui.painter(),
-                                            Rect::from_center_size(
-                                                star_r.center(),
-                                                vec2(18.0, 18.0),
-                                            ),
-                                            icon,
-                                            col,
-                                        );
-                                        if sresp
-                                            .on_hover_text(if m.starred {
-                                                tr!("history.act.unstar")
-                                            } else {
-                                                tr!("history.act.star")
-                                            })
-                                            .clicked()
-                                        {
-                                            act_req = Some((Act::ToggleStar, m.id));
-                                            clicked = Some(m.id);
-                                            continue;
-                                        }
-                                    }
-                                    // Delete button, next to the star. Starred captures don't
-                                    // get one (deleting them still works from the menu and
-                                    // the action bar, with the starred warning).
-                                    if hovered && !m.starred {
-                                        let del_r = Rect::from_center_size(
-                                            pos2(r.right() - 60.0, r.top() + 24.0),
-                                            vec2(30.0, 30.0),
-                                        );
-                                        let dresp = ui.interact(
-                                            del_r,
-                                            ui.scope_id().with(("hist_del", m.id)),
-                                            Sense::click(),
-                                        );
-                                        ui.painter().circle_filled(
-                                            del_r.center(),
-                                            15.0,
-                                            Color32::from_black_alpha(if dresp.hovered() {
-                                                235
-                                            } else {
-                                                205
-                                            }),
-                                        );
-                                        widgets::paint_icon(
-                                            ui.painter(),
-                                            Rect::from_center_size(
-                                                del_r.center(),
-                                                vec2(18.0, 18.0),
-                                            ),
-                                            Icon::Trash,
-                                            Color32::from_white_alpha(if dresp.hovered() {
+                                    let (icon, col) = if m.starred {
+                                        (Icon::StarFilled, STAR_COLOR)
+                                    } else {
+                                        (
+                                            Icon::Star,
+                                            Color32::from_white_alpha(if sresp.hovered() {
                                                 255
                                             } else {
                                                 215
                                             }),
-                                        );
-                                        if dresp.on_hover_text(tr!("history.act.delete")).clicked()
-                                        {
-                                            act_req = Some((Act::Delete, m.id));
-                                            clicked = Some(m.id);
-                                            continue;
-                                        }
-                                    }
-                                    if resp.clicked() || resp.secondary_clicked() {
+                                        )
+                                    };
+                                    ui.painter().circle_filled(
+                                        star_r.center(),
+                                        15.0,
+                                        Color32::from_black_alpha(if sresp.hovered() {
+                                            235
+                                        } else {
+                                            205
+                                        }),
+                                    );
+                                    widgets::paint_icon(
+                                        ui.painter(),
+                                        Rect::from_center_size(star_r.center(), vec2(18.0, 18.0)),
+                                        icon,
+                                        col,
+                                    );
+                                    if sresp
+                                        .on_hover_text(if m.starred {
+                                            tr!("history.act.unstar")
+                                        } else {
+                                            tr!("history.act.star")
+                                        })
+                                        .clicked()
+                                    {
+                                        act_req = Some((Act::ToggleStar, m.id));
                                         clicked = Some(m.id);
+                                        continue;
                                     }
-                                    if resp.double_clicked() {
-                                        act_req = Some((primary_act(m), m.id));
-                                    }
-                                    resp.context_menu(|ui| {
-                                        crate::theme::menu_rows(ui);
-                                        for act in Act::MENU {
-                                            let enabled = act.enabled(m, ocr_available);
-                                            let b = ui.add_enabled(
-                                                enabled,
-                                                egui::Button::new(act.label(m)),
-                                            );
-                                            let b = match act.disabled_reason(m, ocr_available) {
-                                                Some(why) => b.on_disabled_hover_text(why),
-                                                None => b,
-                                            };
-                                            if b.clicked() {
-                                                act_req = Some((act, m.id));
-                                                clicked = Some(m.id);
-                                                ui.close();
-                                            }
-                                        }
-                                    });
                                 }
+                                // Delete button, next to the star. Starred captures don't
+                                // get one (deleting them still works from the menu and
+                                // the action bar, with the starred warning).
+                                if hovered && !m.starred {
+                                    let del_r = Rect::from_center_size(
+                                        pos2(r.right() - 60.0, r.top() + 24.0),
+                                        vec2(30.0, 30.0),
+                                    );
+                                    let dresp = ui.interact(
+                                        del_r,
+                                        ui.scope_id().with(("hist_del", m.id)),
+                                        Sense::click(),
+                                    );
+                                    ui.painter().circle_filled(
+                                        del_r.center(),
+                                        15.0,
+                                        Color32::from_black_alpha(if dresp.hovered() {
+                                            235
+                                        } else {
+                                            205
+                                        }),
+                                    );
+                                    widgets::paint_icon(
+                                        ui.painter(),
+                                        Rect::from_center_size(del_r.center(), vec2(18.0, 18.0)),
+                                        Icon::Trash,
+                                        Color32::from_white_alpha(if dresp.hovered() {
+                                            255
+                                        } else {
+                                            215
+                                        }),
+                                    );
+                                    if dresp.on_hover_text(tr!("history.act.delete")).clicked() {
+                                        act_req = Some((Act::Delete, m.id));
+                                        clicked = Some(m.id);
+                                        continue;
+                                    }
+                                }
+                                if resp.clicked() || resp.secondary_clicked() {
+                                    clicked = Some(m.id);
+                                }
+                                if resp.double_clicked() {
+                                    act_req = Some((primary_act(m), m.id));
+                                }
+                                resp.context_menu(|ui| {
+                                    crate::theme::menu_rows(ui);
+                                    for act in Act::MENU {
+                                        let enabled = act.enabled(m, ocr_available);
+                                        let b = ui
+                                            .add_enabled(enabled, egui::Button::new(act.label(m)));
+                                        let b = match act.disabled_reason(m, ocr_available) {
+                                            Some(why) => b.on_disabled_hover_text(why),
+                                            None => b,
+                                        };
+                                        if b.clicked() {
+                                            act_req = Some((act, m.id));
+                                            clicked = Some(m.id);
+                                            ui.close();
+                                        }
+                                    }
+                                });
                             }
-                        });
+                        }
+                    });
                 });
             }
 
@@ -1812,6 +1839,7 @@ impl Surface for HistoryWindow {
 
         // ---------------- Apply the frame's results ----------------
         self.cols = cols_out;
+        self.grid_focus = grid_focus;
         if search_changed {
             self.debounce.push(self.search.clone(), Instant::now());
             ctx.request_repaint_after(Duration::from_millis(160));
@@ -1823,11 +1851,13 @@ impl Surface for HistoryWindow {
             self.limit = PAGE;
             self.dirty = true;
             self.selected = None;
+            self.scroll_top = true;
         }
         if let Some(d) = new_date {
             self.date = d;
             self.limit = PAGE;
             self.dirty = true;
+            self.scroll_top = true;
         }
         if clear_filters {
             self.clear_filters();
@@ -1871,6 +1901,7 @@ impl Surface for HistoryWindow {
         }
 
         // Delete confirmation.
+        let confirm_fresh = std::mem::take(&mut self.confirm_fresh);
         if let Some(id) = self.confirm_delete {
             let meta = self.items.iter().find(|m| m.id == id).cloned();
             match meta {
@@ -1896,11 +1927,11 @@ impl Surface for HistoryWindow {
                             };
                             ui.label(RichText::new(body).size(12.0).color(p.text_tertiary));
                             ui.add_space(14.0);
-                            let (mut cancel, mut del) = (false, false);
+                            let (mut cancel, mut del, mut focused) = (false, false, false);
                             ui.horizontal(|ui| {
                                 let (r1, _) =
                                     ui.allocate_exact_size(vec2(170.0, 34.0), Sense::hover());
-                                cancel = uc::rect_button(
+                                let b = uc::rect_button(
                                     ui,
                                     "del_cancel",
                                     r1,
@@ -1909,11 +1940,12 @@ impl Surface for HistoryWindow {
                                     true,
                                     p,
                                     accent,
-                                )
-                                .clicked();
+                                );
+                                cancel = b.clicked();
+                                focused |= b.has_focus();
                                 let (r2, _) =
                                     ui.allocate_exact_size(vec2(170.0, 34.0), Sense::hover());
-                                del = uc::rect_button(
+                                let b = uc::rect_button(
                                     ui,
                                     "del_ok",
                                     r2,
@@ -1922,17 +1954,23 @@ impl Surface for HistoryWindow {
                                     true,
                                     p,
                                     accent,
-                                )
-                                .clicked();
+                                );
+                                del = b.clicked();
+                                focused |= b.has_focus();
                             });
-                            (cancel, del)
+                            (cancel, del, focused)
                         });
-                    let (cancel, del) = modal.inner;
-                    let enter = ctx.input(|i| i.key_pressed(Key::Enter));
-                    if del || enter {
+                    let (cancel, del, focused) = modal.inner;
+                    // Enter confirms only when it is not already a focused button's key
+                    // (Cancel included), and not the press that opened the dialog.
+                    let enter =
+                        !confirm_fresh && !focused && ctx.input(|i| i.key_pressed(Key::Enter));
+                    if cancel {
+                        self.confirm_delete = None;
+                    } else if del || enter {
                         self.confirm_delete = None;
                         self.confirm_delete_now(shared, id);
-                    } else if cancel || modal.should_close() {
+                    } else if modal.should_close() {
                         self.confirm_delete = None;
                     }
                 }
@@ -1989,7 +2027,7 @@ fn paint_card(
                 Icon::Play
             };
             let _ = icon;
-            if failed || m.kind == ItemKind::Video {
+            if failed {
                 // No thumbnail will ever arrive: show the type instead of a spinner.
                 let label = match m.kind {
                     ItemKind::Video => "MP4",
@@ -2223,7 +2261,7 @@ mod tests {
         let line = item_meta_line(&m, now);
         assert!(line.starts_with("Today "));
         assert!(
-            line.ends_with("scrolling \u{b7} 1,280 \u{d7} 4,210"),
+            line.ends_with("Scrolling \u{b7} 1,280 \u{d7} 4,210"),
             "{line}"
         );
         m.mode = "region".into();
@@ -2294,21 +2332,25 @@ mod tests {
         assert!(!Act::CopyText.enabled(&img, false));
         assert_eq!(
             Act::CopyText.disabled_reason(&img, false),
-            Some("No OCR language is installed")
+            Some("Needs an OCR Language in Windows Settings")
         );
         let mut pending = meta(3, ItemKind::Image);
         pending.ocr_text = None;
         assert_eq!(
             Act::CopyText.disabled_reason(&pending, true),
-            Some("Text is still being indexed")
+            Some("Still Indexing Text")
         );
         pending.ocr_text = Some("  ".into());
         assert_eq!(
             Act::CopyText.disabled_reason(&pending, true),
-            Some("No text found in this capture")
+            Some("No Text Found")
         );
         assert_eq!(primary_act(&img), Act::Edit);
         assert_eq!(primary_act(&vid), Act::Open);
+        // A recording is played, an image opened.
+        assert_eq!(Act::Open.label(&vid), "Play");
+        assert_eq!(Act::Open.label(&meta(4, ItemKind::Gif)), "Play");
+        assert_eq!(Act::Open.label(&img), "Open");
     }
 
     #[test]

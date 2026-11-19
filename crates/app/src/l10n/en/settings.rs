@@ -3,7 +3,7 @@
 pub fn get(key: &str) -> Option<&'static str> {
     Some(match key {
         "settings.language" => "Language",
-        "settings.language.desc" => "Language for menus and messages. Pseudo is a layout test.",
+        "settings.language.desc" => "Language for menus and messages.",
         "settings.language.system" => "System Default",
         "settings.language.en" => "English",
         "settings.language.pseudo" => "Pseudo",
@@ -34,7 +34,7 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.hotkeys.snip_turning_off" => "Turning off\u{2026}",
         "settings.hotkeys.snip_turning_on" => "Turning on\u{2026}",
         "settings.hotkeys.snip_active" => "Active",
-        "settings.hotkeys.prtsc_unbound" => "PrtSc isn't bound, so Snipping Tool keeps it.",
+        "settings.hotkeys.prtsc_unbound" => "No hotkey uses PrtSc, so Snipping Tool keeps it.",
         "settings.hotkeys.chord_snip" => "Snipping Tool Snip",
         "settings.hotkeys.chord_record" => "Snipping Tool Recording",
         "settings.hotkeys.snipping_tool" => "Snipping Tool",
@@ -43,22 +43,25 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.hotkeys.check_again" => "Check Again",
         "settings.hotkeys.still_in_use" => "Still in use.",
         "settings.hotkeys.no_change" => "No change.",
+        "settings.hotkeys.in_use_many" => {
+            "{n} hotkeys are already used by another program. Close it or pick other keys below."
+        }
         "settings.capture.example_title" => "Example Page",
         "settings.capture.pattern.desc" => {
             "Tokens: {yyyy} {MM} {dd} {HH} {mm} {ss} {fff} {app} {title} {w} {h}. Example: {preview}"
         }
-        "settings.recording.device_missing" => "{name} (not found)",
+        "settings.recording.device_missing" => "{name} (Not Found)",
         "settings.history.forever" => "Forever",
-        "settings.history.one_day" => "1 day",
-        "settings.history.days" => "{n} days",
-        "settings.history.no_cap" => "No Cap",
+        "settings.history.no_limit" => "No Limit",
+        "settings.history.one_day" => "1 Day",
+        "settings.history.days" => "{n} Days",
         "settings.history.gb" => "{gb} GB",
-        "settings.history.folder.desc" => "{path}\nExisting captures stay where they are.",
-        "settings.history.ocr.desc" => {
-            "OCR each capture in the background so you can search what was on screen."
+        "settings.history.folder.desc" => {
+            "{path}\nCaptures in the old folder stay there and leave History."
         }
+        "settings.history.ocr.desc" => "Read the text in each capture so History can search it.",
         "settings.history.ocr.desc_missing" => {
-            "OCR each capture in the background so you can search what was on screen. No OCR language is installed. {help}"
+            "Read the text in each capture so History can search it. No OCR language is installed. {help}"
         }
         "settings.history.stats" => "{count} items, {size} used.",
         "settings.privacy.never_checked" => "Never checked",
@@ -75,24 +78,24 @@ pub fn get(key: &str) -> Option<&'static str> {
             "Windows could not show the log file. Try again in a moment."
         }
         "settings.open_history" => "Open History",
-        "settings.general.start_with_windows" => "Start with Windows",
+        "settings.general.start_with_windows" => "Start With Windows",
         "settings.general.start_with_windows.desc" => {
             "Launch Stinkshot to the tray when you sign in."
         }
         "settings.theme.dark" => "Dark",
         "settings.theme.light" => "Light",
-        "settings.theme.system" => "Use System Setting",
+        "settings.theme.system" => "System Default",
         "settings.general.accent" => "Accent Color",
-        "settings.general.accent.desc" => "Buttons, selection, HUDs and click ripples.",
+        "settings.general.accent.desc" => {
+            "Buttons, selection, the recording bar and click ripples."
+        }
         "settings.general.windows_accent" => "Windows Accent",
-        "settings.general.windows_accent.tip" => "Use the accent color from Windows settings",
+        "settings.general.windows_accent.tip" => "Use the Windows Accent Color",
         "settings.general.after_capture" => "After a Capture",
         "settings.general.copy" => "Copy to Clipboard",
         "settings.general.copy.desc" => "Put every finished capture on the clipboard.",
         "settings.general.toast" => "Show Toast",
-        "settings.general.toast.desc" => {
-            "A small card with Edit, Copy, Pin, Copy Text and Show in Folder actions."
-        }
+        "settings.general.toast.desc" => "A small card with quick actions after each capture.",
         "settings.general.toast_duration" => "Toast Duration",
         "settings.general.toast_duration.desc" => {
             "How long the toast stays. Hovering pauses the timer."
@@ -100,7 +103,7 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.general.sound" => "Play Sound",
         "settings.general.hide_capture" => "Hide Stinkshot From Captures",
         "settings.general.hide_capture.desc" => {
-            "Keep the overlay, toasts and recording bar out of screenshots and recordings."
+            "Keep the editor, toasts and recording bar out of captures and recordings."
         }
         "settings.general.sound.desc" => "A short shutter sound after capturing.",
         "settings.general.pins" => "Pins",
@@ -116,18 +119,18 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.hotkeys.printscreen" => "Take Over PrintScreen",
         "settings.hotkeys.printscreen.locked" => "Set by Replace Snipping Tool.",
         "settings.hotkeys.printscreen.desc" => "PrtSc opens Stinkshot.",
-        "settings.hotkeys.shortcuts" => "Shortcuts",
+        "settings.hotkeys.shortcuts" => "Hotkeys",
         "settings.hotkeys.clear" => "Clear",
         "settings.hotkeys.chord_fixed" => "Fixed by Windows; it cannot be changed.",
         "settings.hotkeys.help" => {
-            "Click a shortcut, then press the combination. Esc cancels, Backspace clears it."
+            "Click a hotkey, then press the keys. Esc cancels, Backspace clears."
         }
-        "settings.hotkeys.reset" => "Reset Shortcuts to Defaults",
+        "settings.hotkeys.reset" => "Reset Hotkeys",
         "settings.capture.cursor" => "Include Mouse Cursor",
-        "settings.capture.cursor.desc" => "Draw the pointer into screenshots.",
+        "settings.capture.cursor.desc" => "Draw the cursor into captures.",
         "settings.capture.cursor_object" => "Cursor as Object",
         "settings.capture.cursor_object.desc" => {
-            "In the editor, keep the pointer as a movable object. Del removes it."
+            "In the editor, keep the cursor as a movable object. Del removes it."
         }
         "settings.capture.snap" => "Snap to Windows and Elements",
         "settings.capture.snap.desc" => {
@@ -137,20 +140,18 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.capture.loupe.desc" => {
             "Show a pixel loupe with coordinates and color while selecting."
         }
-        "settings.capture.open_editor" => "Open Editor After Window and Full-Screen Captures",
+        "settings.capture.open_editor" => "Edit Window and Full Screen Captures",
         "settings.capture.open_editor.desc" => {
             "Off: they save right away. Use Edit on the toast to annotate."
         }
         "settings.capture.after_region" => "After Selecting a Region",
         "settings.capture.after_region.desc" => "Ctrl+C always copies.",
         "settings.capture.after_region.annotate" => "Annotate in Place",
-        "settings.capture.after_region.window" => "Open Editor Window on Enter",
-        "settings.capture.after_region.instant" => "Open Editor Window Right Away",
+        "settings.capture.after_region.window" => "Open Editor on Enter",
+        "settings.capture.after_region.instant" => "Open Editor Right Away",
         "settings.capture.window" => "Window Capture",
         "settings.capture.corners" => "Rounded Corners",
-        "settings.capture.corners.desc" => {
-            "Keep the real Windows 11 corners, with alpha, in PNG output."
-        }
+        "settings.capture.corners.desc" => "Keep the real Windows 11 corners, transparent in PNG.",
         "settings.capture.shadow" => "Drop Shadow",
         "settings.capture.shadow.desc" => "Add a soft shadow around captured windows.",
         "settings.capture.frame" => "Padded Background Frame",
@@ -162,7 +163,7 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.capture.saving" => "Saving",
         "settings.capture.format" => "Image Format",
         "settings.capture.format.desc" => {
-            "PNG keeps alpha and text sharp; JPEG and WebP are smaller."
+            "PNG keeps transparency and sharp text. JPEG and WebP are smaller."
         }
         "settings.capture.jpeg_quality" => "JPEG Quality",
         "settings.capture.jpeg_quality.desc" => "Higher is larger and cleaner.",
@@ -175,18 +176,18 @@ pub fn get(key: &str) -> Option<&'static str> {
             "Longer waits happen on their own while a page loads."
         }
         "settings.editor.defaults" => "Defaults",
-        "settings.editor.color" => "Default Color",
+        "settings.editor.color" => "Starting Color",
         "settings.editor.color.desc" => {
-            "Pick from the palette. Keys 1 to 8 choose palette colors in the editor."
+            "For tools not used yet. Keys 1 to 8 pick palette colors in the editor."
         }
         "settings.editor.stroke" => "Stroke Width",
         "settings.editor.stroke.desc" => "Lines, arrows and shapes.",
         "settings.editor.font_size" => "Font Size",
         "settings.editor.font_size.desc" => "Text annotations.",
         "settings.editor.blur" => "Blur Radius",
-        "settings.editor.blur.desc" => "Blur tool strength.",
+        "settings.editor.blur.desc" => "Higher hides more.",
         "settings.editor.pixelate" => "Pixelate Block",
-        "settings.editor.pixelate.desc" => "Pixelate tool block size.",
+        "settings.editor.pixelate.desc" => "Larger blocks hide more.",
         "settings.editor.palette" => "Palette",
         "settings.editor.palette_colors" => "Palette Colors",
         "settings.editor.palette_colors.desc" => {
@@ -201,9 +202,7 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.recording.fps" => "Frame Rate",
         "settings.recording.fps.desc" => "MP4 frame rate. 120 FPS needs hardware encoding.",
         "settings.recording.bitrate" => "Bitrate",
-        "settings.recording.bitrate.desc" => {
-            "H.264 video bitrate. Hardware encoding is used when available."
-        }
+        "settings.recording.bitrate.desc" => "Higher is sharper and larger.",
         "settings.recording.countdown" => "Countdown",
         "settings.recording.countdown.desc" => {
             "Seconds before recording starts. 0 starts immediately."
@@ -211,7 +210,7 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.recording.clicks" => "Show Mouse Clicks",
         "settings.recording.clicks.desc" => "Expanding ripples around clicks.",
         "settings.recording.keys" => "Show Key Presses",
-        "settings.recording.keys.desc" => "A chip with the current key combination.",
+        "settings.recording.keys.desc" => "Show pressed keys in the recording.",
         "settings.recording.audio_webcam" => "Audio and Webcam",
         "settings.recording.system_audio" => "System Audio",
         "settings.recording.system_audio.desc" => "Record what your PC is playing.",
@@ -228,7 +227,7 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.recording.webcam_size" => "Webcam Size",
         "settings.recording.webcam_size.desc" => "Bubble diameter.",
         "settings.recording.devices" => "Devices",
-        "settings.recording.devices.desc" => "Plugged something in? Look again.",
+        "settings.recording.devices.desc" => "Rescan microphones and webcams.",
         "settings.recording.refresh" => "Refresh Devices",
         "settings.recording.gif" => "GIF Output",
         "settings.recording.gif_fps" => "GIF Frame Rate",
@@ -245,13 +244,28 @@ pub fn get(key: &str) -> Option<&'static str> {
             "Windows could not open that folder. Check that it still exists."
         }
         "settings.history.ocr" => "Index Text for Search",
-        "settings.history.keep" => "Keep Captures",
+        "settings.history.keep" => "Keep Captures For",
         "settings.history.keep.desc" => {
-            "Older or excess items are deleted. Starred items are always kept."
+            "Older captures are permanently deleted. Starred ones are kept."
         }
+        "settings.history.limit" => "Storage Limit",
+        "settings.history.limit.desc" => {
+            "Over the limit, the oldest captures are permanently deleted. Starred ones are kept."
+        }
+        "settings.history.pending" => {
+            "Applying this permanently deletes {n} captures ({size}) now."
+        }
+        "settings.history.pending_one" => {
+            "Applying this permanently deletes 1 capture ({size}) now."
+        }
+        "settings.history.pending_none" => "Nothing would be deleted right now.",
+        "settings.history.pending_checking" => "Counting captures\u{2026}",
+        "settings.history.pending_failed" => "Could not count what this would delete.",
+        "settings.history.apply" => "Apply",
+        "settings.history.cancel" => "Cancel",
         "settings.history.originals" => "Keep Editable Originals",
         "settings.history.originals.desc" => {
-            "Store the unannotated original and annotations so captures can be re-edited. Redacted pixels remain in that original; it never leaves this PC."
+            "Keep annotations editable later. Anything under a blur, pixelate or redact box is never stored."
         }
         "settings.privacy.card" => "Your Captures Never Leave This PC",
         "settings.privacy.card.body" => {
@@ -266,7 +280,7 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.privacy.check_failed" => "Last check failed. Try again later.",
         "settings.privacy.history.desc" => "Where captures are kept, and for how long.",
         "settings.privacy.history.open" => "History Settings",
-        "settings.privacy.updates_off" => "Turn on update checks first",
+        "settings.privacy.updates_off" => "Turn On Update Checks First",
         "settings.privacy.update_ready" => "Stinkshot {tag} Is Available",
         "settings.privacy.update_ready.desc" => {
             "Downloads the signed installer from stinkshot.com, then restarts on the new version."
@@ -298,8 +312,11 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.about.log.desc" => {
             "Error details are written to stinkshot.log. Include it when reporting a problem."
         }
-        "settings.about.open_log" => "Open Log",
-        "settings.about.log_failed" => "Could Not Open the Log",
+        "settings.about.open_log" => "Show Log",
+        "settings.about.log_failed" => "Could Not Show the Log",
+        "settings.about.report" => "Report a Problem",
+        "settings.about.report.desc" => "Opens the issue tracker in your browser.",
+        "settings.about.report.open" => "Open Issues",
         "settings.about.privacy" => "Privacy",
         "settings.about.privacy.desc" => {
             "Local only: no uploads, no accounts, no telemetry. The single optional network call is the update check."
@@ -313,7 +330,7 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.help.hotkeys.desc" => "Work anywhere while Stinkshot runs.",
         "settings.help.change_hotkeys" => "Change Hotkeys",
         "settings.help.editor" => "Editor Shortcuts",
-        "settings.help.editor.desc" => "In the capture overlay. Press F1 or ? there for this list.",
+        "settings.help.editor.desc" => "In the editor. Press F1 or ? there for this list.",
         "settings.help.tray" => "Tray Icon",
         "settings.help.tray.click" => "Click",
         "settings.help.tray.click.what" => "Capture a Region",
@@ -399,13 +416,14 @@ pub const KEYS: &[&str] = &[
     "settings.hotkeys.check_again",
     "settings.hotkeys.still_in_use",
     "settings.hotkeys.no_change",
+    "settings.hotkeys.in_use_many",
     "settings.capture.example_title",
     "settings.capture.pattern.desc",
     "settings.recording.device_missing",
     "settings.history.forever",
+    "settings.history.no_limit",
     "settings.history.one_day",
     "settings.history.days",
-    "settings.history.no_cap",
     "settings.history.gb",
     "settings.history.folder.desc",
     "settings.history.ocr.desc",
@@ -557,6 +575,15 @@ pub const KEYS: &[&str] = &[
     "settings.history.ocr",
     "settings.history.keep",
     "settings.history.keep.desc",
+    "settings.history.limit",
+    "settings.history.limit.desc",
+    "settings.history.pending",
+    "settings.history.pending_one",
+    "settings.history.pending_none",
+    "settings.history.pending_checking",
+    "settings.history.pending_failed",
+    "settings.history.apply",
+    "settings.history.cancel",
     "settings.history.originals",
     "settings.history.originals.desc",
     "settings.privacy.card",
@@ -592,6 +619,9 @@ pub const KEYS: &[&str] = &[
     "settings.about.log.desc",
     "settings.about.open_log",
     "settings.about.log_failed",
+    "settings.about.report",
+    "settings.about.report.desc",
+    "settings.about.report.open",
     "settings.about.privacy",
     "settings.about.privacy.desc",
     "settings.about.offline",

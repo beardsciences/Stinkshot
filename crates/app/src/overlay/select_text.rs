@@ -164,7 +164,9 @@ impl Overlay {
         if !self.select_text_active() || self.edit.is_some() {
             return;
         }
-        let base = self.ensure_base();
+        // What the picture shows, pasted pictures included (the same `Arc` until it
+        // changes).
+        let base = self.content_image();
         if !self
             .text_select
             .as_ref()

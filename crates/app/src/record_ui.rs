@@ -305,6 +305,9 @@ impl Surface for RecordFrame {
     fn on_created(&mut self, hwnd: Hwnd, _shared: &Shared) {
         uc::apply_hud_style(hwnd, self.rect, true, true);
         stinkshot_platform::window_util::exclude_from_capture_always(hwnd);
+        // Only the border band is window: where the GPU gives the window no transparency
+        // (seen as a solid white box over the recorded area), the middle stays clear.
+        stinkshot_platform::window_util::set_hollow_region(hwnd, uc::px(FRAME_MARGIN, self.scale));
     }
 
     fn show(&mut self, ctx: &egui::Context, shared: &mut Shared) -> SurfaceStatus {
@@ -1618,6 +1621,9 @@ impl Surface for ScrollHud {
         stinkshot_platform::window_util::apply_mica(hwnd, shared.dark);
         uc::apply_hud_style(hwnd, self.rect, true, true);
         stinkshot_platform::window_util::exclude_from_capture_always(hwnd);
+        // Only the border band is window: where the GPU gives the window no transparency
+        // (seen as a solid white box over the recorded area), the middle stays clear.
+        stinkshot_platform::window_util::set_hollow_region(hwnd, uc::px(FRAME_MARGIN, self.scale));
     }
 
     fn show(&mut self, ctx: &egui::Context, shared: &mut Shared) -> SurfaceStatus {

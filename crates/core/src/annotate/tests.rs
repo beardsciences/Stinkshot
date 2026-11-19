@@ -2945,3 +2945,144 @@ fn a_saved_blur_is_not_applied_again() {
     assert_ne!(render(&b3, &moved, &f).data, first.data);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_shape_under_a_redaction_is_not_kept_in_the_sidecar() {
+    let f = test_fonts();
+    let dir = tmpdir("sidecar-covered");
+    let flat = dir.join("a.png");
+    let base = white(120, 80);
+    // The secrets: a pasted picture in one unmistakable color and a line of text, both
+    // wholly under a Redact box.
+    const SECRET: [u8; 4] = [12, 200, 77, 255];
+    let secret = CursorImage::new(Rgba::filled(20, 10, SECRET));
+    let mut doc = Doc::new(120, 80);
+    // Below the box in z-order but nowhere near it: flattened along with what is covered.
+    doc.add(
+        ShapeKind::Line {
+            from: pt(5.0, 70.0),
+            to: pt(60.0, 70.0),
+        },
+        style(RED, 3.0),
+    );
+    doc.add(
+        ShapeKind::Image {
+            rect: RectF::new(30.0, 20.0, 20.0, 10.0),
+            image: secret.clone(),
+        },
+        style(RED, 1.0),
+    );
+    doc.add(
+        ShapeKind::Text {
+            pos: pt(32.0, 34.0),
+            text: "hunter2secret".into(),
+            size: 10.0,
+            background: None,
+            bold: false,
+            width: None,
+            cover: false,
+        },
+        style([0, 0, 255, 255], 1.0),
+    );
+    // Without the box the picture shows.
+    let open = render(&base, &doc, &f);
+    assert!(count_where(&open, open.bounds(), |p| p == SECRET) > 0);
+    doc.add(
+        ShapeKind::Redact {
+            rect: RectF::new(20.0, 10.0, 95.0, 45.0),
+        },
+        style([0, 0, 0, 255], 1.0),
+    );
+    // Above the box: stays an editable object.
+    let arrow = doc.add(
+        ShapeKind::Arrow {
+            from: pt(80.0, 68.0),
+            to: pt(110.0, 74.0),
+            ctrl: None,
+            double: false,
+            head: ArrowHead::default(),
+        },
+        style(RED, 3.0),
+    );
+    let shown = render(&base, &doc, &f);
+    assert_eq!(count_where(&shown, shown.bounds(), |p| p == SECRET), 0);
+
+    save_editable(&flat, &base, &doc).unwrap();
+    let json =
+        std::fs::read_to_string(dir.join(".stinkshot").join("edit").join("a.png.json")).unwrap();
+    assert!(!json.contains("hunter2secret"), "covered text is stored");
+    assert!(!json.contains("\"image\""), "a picture is stored");
+    let encoded = serde_json::to_string(&secret).unwrap();
+    assert!(!json.contains(encoded.trim_matches('"')));
+    let (b2, d2) = load_editable(&flat).unwrap().unwrap();
+    assert_eq!(count_where(&b2, b2.bounds(), |p| p == SECRET), 0);
+    for y in 10..55 {
+        for x in 20..115 {
+            assert_eq!(b2.pixel(x, y), [0, 0, 0, 255], "({x},{y})");
+        }
+    }
+    // Only the arrow is left to edit; the line under the cut is pixels now.
+    assert_eq!(d2.shapes.len(), 1);
+    assert_eq!(d2.shapes[0].id, arrow);
+    assert!(d2.baked.is_empty());
+    assert!(count_where(&b2, PxRect::new(5, 66, 55, 8), is_reddish) > 0);
+    // The picture a re-edit starts from is the one that was saved.
+    assert_eq!(render(&b2, &d2, &f).data, shown.data);
+    // Saving what was loaded changes nothing.
+    save_editable(&flat, &b2, &d2).unwrap();
+    let (b3, d3) = load_editable(&flat).unwrap().unwrap();
+    assert_eq!((b3.data, d3.shapes), (b2.data, d2.shapes));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn text_under_a_blur_is_flattened_and_a_later_blur_stays_editable() {
+    let f = test_fonts();
+    let dir = tmpdir("sidecar-covered-blur");
+    let flat = dir.join("a.png");
+    let base = white(160, 80);
+    let mut doc = Doc::new(160, 80);
+    doc.add(
+        ShapeKind::Text {
+            pos: pt(12.0, 14.0),
+            text: "4111 1111".into(),
+            size: 14.0,
+            background: None,
+            bold: false,
+            width: None,
+            cover: false,
+        },
+        style([0, 0, 0, 255], 1.0),
+    );
+    doc.add(
+        ShapeKind::Blur {
+            rect: RectF::new(5.0, 5.0, 90.0, 35.0),
+            radius: 6.0,
+        },
+        style(RED, 1.0),
+    );
+    // Covers nothing but the capture.
+    let free = doc.add(
+        ShapeKind::Pixelate {
+            rect: RectF::new(110.0, 40.0, 40.0, 30.0),
+            block: 8,
+        },
+        style(RED, 1.0),
+    );
+    let shown = render(&base, &doc, &f);
+    save_editable(&flat, &base, &doc).unwrap();
+    let json =
+        std::fs::read_to_string(dir.join(".stinkshot").join("edit").join("a.png.json")).unwrap();
+    assert!(!json.contains("4111"));
+    let (b2, d2) = load_editable(&flat).unwrap().unwrap();
+    assert_eq!(d2.shapes.len(), 1);
+    assert_eq!(d2.shapes[0].id, free);
+    assert_eq!(d2.baked, d2.shapes);
+    // What is stored under the blur is the blurred text, not the text.
+    assert_eq!(
+        b2.crop(PxRect::new(5, 5, 90, 35)).data,
+        shown.crop(PxRect::new(5, 5, 90, 35)).data
+    );
+    assert_eq!(render(&b2, &d2, &f).data, shown.data);
+    let _ = std::fs::remove_dir_all(&dir);
+}

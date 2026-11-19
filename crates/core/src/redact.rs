@@ -19,8 +19,10 @@ pub fn blur(img: &mut Rgba, rect: PxRect, radius: f32) {
         return;
     };
     let (w, h) = (r.w as usize, r.h as usize);
+    // No stronger than the rect is large: by then it is one smear already, and a huge
+    // radius (a damaged sidecar) would make the box passes run for hours.
     let sigma = if radius.is_finite() {
-        radius.max(MIN_BLUR_SIGMA)
+        radius.min(w.max(h) as f32).max(MIN_BLUR_SIGMA)
     } else {
         MIN_BLUR_SIGMA
     };
@@ -69,7 +71,12 @@ pub fn pixelate(img: &mut Rgba, rect: PxRect, block: u32) {
     let Some(r) = rect.intersect(&img.bounds()) else {
         return;
     };
-    let block = block.max(MIN_PIXELATE_BLOCK) as i32;
+    // One cell at most covers the whole rect; a larger value (a damaged sidecar) would
+    // wrap negative as i32.
+    let block = block.clamp(
+        MIN_PIXELATE_BLOCK,
+        (r.w.max(r.h) as u32).max(MIN_PIXELATE_BLOCK),
+    ) as i32;
     let stride = img.width as usize * 4;
     // Cells are aligned to the rect origin so the grid hugs the selection.
     let mut cy = 0;
@@ -362,5 +369,26 @@ mod tests {
                 assert!(b % 2 == 1 && b >= 1);
             }
         }
+    }
+
+    #[test]
+    fn absurd_strengths_from_a_damaged_sidecar_are_clamped() {
+        let mut img = stripes(40, 30);
+        let r = PxRect::new(4, 4, 30, 20);
+        // Would wrap negative as i32 and never advance.
+        pixelate(&mut img, r, u32::MAX);
+        let first = img.pixel(4, 4);
+        for y in 4..24 {
+            for x in 4..34 {
+                assert_eq!(img.pixel(x, y), first, "one cell covers the rect");
+            }
+        }
+        // Would run box passes billions of samples wide.
+        let mut img = stripes(40, 30);
+        blur(&mut img, r, 1.0e30);
+        let (lo, hi) = red_range(&img, PxRect::new(10, 10, 18, 8));
+        assert!(hi - lo < 40, "blurred flat, got {lo}..{hi}");
+        blur(&mut img, r, f32::MAX);
+        blur(&mut img, r, f32::NAN);
     }
 }

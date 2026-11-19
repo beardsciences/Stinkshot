@@ -19,17 +19,17 @@ pub fn get(key: &str) -> Option<&'static str> {
         "shell.action.record_mp4" => "Record MP4",
         "shell.action.record_gif" => "Record GIF",
         "shell.action.region.desc" => "Freeze the screen and drag a region.",
-        "shell.action.window.desc" => "Capture the active window with rounded corners and alpha.",
+        "shell.action.window.desc" => "Capture the active window with its rounded corners.",
         "shell.action.fullscreen.desc" => "Capture the monitor under the cursor.",
-        "shell.action.scrolling.desc" => "Select a region, Stinkshot scrolls and stitches it.",
+        "shell.action.scrolling.desc" => "Select a region; Stinkshot scrolls and stitches it.",
         "shell.action.ocr.desc" => "Select a region and copy the recognized text.",
         "shell.action.repeat_last.desc" => "Capture the previous region again without selecting.",
         "shell.action.selected_text.desc" => "Capture the text highlighted in the active app.",
         "shell.action.selected_paragraph.desc" => {
-            "Capture the whole paragraphs around the highlighted text."
+            "Capture the paragraphs around the highlighted text."
         }
         "shell.selected_text.none" => "No Selected Text",
-        "shell.selected_text.none.body" => "No selected text found here.",
+        "shell.selected_text.none.body" => "Select text in the app first.",
         "shell.action.pick_color.desc" => "Click any pixel to copy its color as hex, RGB or HSL.",
         "shell.action.record_mp4.desc" => "Select a region and record with hardware encoding.",
         "shell.action.record_gif.desc" => "Select a region and record a size-optimized GIF.",
@@ -57,10 +57,10 @@ pub fn get(key: &str) -> Option<&'static str> {
         "shell.toast.copy" => "Copy",
         "shell.toast.pin" => "Pin",
         "shell.toast.copy_text" => "Copy Text",
-        "shell.toast.folder" => "Folder",
-        "shell.toast.delete" => "Delete",
+        "shell.toast.folder" => "Show in Folder",
+        "shell.toast.delete" => "Move to Recycle Bin",
         "shell.toast.play" => "Play",
-        "shell.toast.edit.tip" => "Open in the Editor",
+        "shell.toast.edit.tip" => "Open in Editor",
         "shell.toast.copy_file.tip" => "Copy the File to the Clipboard",
         "shell.toast.copy_image.tip" => "Copy the Image to the Clipboard",
         "shell.toast.pin.tip" => "Pin to Screen",
@@ -69,7 +69,8 @@ pub fn get(key: &str) -> Option<&'static str> {
         "shell.toast.delete.tip" => "Move to Recycle Bin",
         "shell.toast.dismiss" => "Dismiss",
         "shell.toast.ocr_missing" => "Copy Text Needs an OCR Language in Windows Settings",
-        "shell.tray.update_check_on" => "Update Check On",
+        "shell.tray.update_check_on" => "Update Checks On",
+        "shell.tray.stop_recording" => "Stop Recording",
         "shell.tray.offline" => "Offline",
         "shell.pin.copied" => "Copied",
         "shell.pin.copy_failed" => "Could Not Copy",
@@ -77,7 +78,7 @@ pub fn get(key: &str) -> Option<&'static str> {
         "shell.pin.open_editor" => "Open in Editor",
         "shell.pin.reset_zoom" => "Reset Zoom to 100%",
         "shell.pin.close" => "Close Pin",
-        "shell.pin.opacity.tip" => "Opacity (Ctrl+scroll)",
+        "shell.pin.opacity.tip" => "Opacity (Ctrl+Wheel)",
         "shell.pin.copy.tip" => "Copy (Ctrl+C)",
         "shell.pin.close.tip" => "Close Pin (Esc)",
         "shell.pin.edit.tip" => "Open in Editor (Double-Click)",
@@ -98,7 +99,7 @@ pub fn get(key: &str) -> Option<&'static str> {
         "shell.hotkeys.inactive" => "Some Hotkeys Are Not Active",
         "shell.history_dir.fallback" => "History Folder Unavailable",
         "shell.history_dir.fallback.body" => {
-            "{dir} could not be opened. Captures go to the default folder until you pick another in Settings."
+            "{dir} could not be opened. Captures go to the default folder until it is back."
         }
         "shell.tray.unavailable" => "Tray Icon Unavailable",
         "shell.tray.unavailable.body" => {
@@ -140,8 +141,9 @@ pub fn get(key: &str) -> Option<&'static str> {
         "shell.record.problem.body" => "The recorder hit a problem.",
         "shell.record.problem.tail" => "Stopping and keeping what was recorded.",
         "shell.record.problem" => "Recording Problem",
+        "shell.record.disk_low" => "Disk Almost Full",
+        "shell.record.disk_low.body" => "Recording stopped to keep what was recorded.",
         "shell.capture.window_failed" => "Could Not Capture the Window",
-        "shell.edit.not_yet" => "Cannot Edit Yet",
         "shell.scroll.stopped" => "Scrolling Capture Stopped Early",
         "shell.scroll.stopped.body" => {
             "The page could not be matched any further; kept what was captured."
@@ -231,7 +233,7 @@ pub fn get(key: &str) -> Option<&'static str> {
         "shell.tray.update_available" => "Update Available: {tag}",
         "shell.pin.ready" => "{name} is ready to paste.",
         "shell.pin.opacity" => "Opacity {pct}%",
-        "shell.error.log_hint" => "Details are in the log (Settings > About > Open Log).",
+        "shell.error.log_hint" => "Details are in the log (Settings > About > Show Log).",
         "shell.countdown.cancel" => "Esc to Cancel",
         "shell.hud.stop_trim" => "Stop and Trim",
         "shell.hud.resume" => "Resume",
@@ -240,7 +242,7 @@ pub fn get(key: &str) -> Option<&'static str> {
         "shell.hud.webcam" => "Webcam",
         "shell.hud.show_input" => "Show Clicks and Keys",
         "shell.hud.stop" => "Stop",
-        "shell.hud.problem" => "Recording Problem, Stopping and Keeping What Was Recorded",
+        "shell.hud.problem" => "Recording Problem: Saving What Was Recorded",
         "shell.trim.discard_prompt" => "Discard This Recording?",
         "shell.trim.discard_prompt.body" => "It has not been saved yet. This cannot be undone.",
         "shell.trim.save_prompt" => "Save This Recording?",
@@ -259,15 +261,15 @@ pub fn get(key: &str) -> Option<&'static str> {
         "shell.hud.on" => "{name} On",
         "shell.hud.off" => "{name} Off",
         "shell.hud.stop_trim_key" => "Stop and Trim ({key})",
-        "shell.hud.dropped" => "{summary} · {n} dropped",
+        "shell.hud.dropped" => "{summary} · {n} Dropped",
         "shell.trim.save_prompt.body" => {
-            "It has not been saved yet. Save Untrimmed keeps the whole recording as {fmt} in History. Discard asks once more, then deletes it."
+            "Not saved yet. Save Untrimmed keeps the whole recording as {fmt}."
         }
-        "shell.trim.keep" => "keep {t}",
+        "shell.trim.keep" => "Keep {t}",
         "shell.scroll.stitching" => "Stitching Frame {n}",
         "shell.internal.title" => "Something Went Wrong",
         "shell.clipboard.busy_saved" => {
-            "Another app is using the clipboard. The capture is saved; press Copy on its toast or in History in a moment."
+            "Another app is using the clipboard. The capture is saved; use Copy on the toast or in History."
         }
         "shell.clipboard.refused_saved" => {
             "Windows did not accept the image on the clipboard. The capture is saved in History; try Copy there."
@@ -280,6 +282,20 @@ pub fn get(key: &str) -> Option<&'static str> {
             "The capture could not be written to the history folder."
         }
         "shell.save.history_failed" => "Could Not Save to History",
+        "shell.save.history_failed.elsewhere" => "It was saved to {dir} instead.",
+        "shell.save.history_failed.clipboard" => "It was copied to the clipboard instead.",
+        "shell.save.history_failed.lost" => "The capture was not kept.",
+        "shell.saved.default_folder" => "Saved to Default Folder",
+        "shell.history_dir.back" => "History Folder Available",
+        "shell.history_dir.back.body" => "{dir} is connected again. Captures go there now.",
+        "shell.end_session.reason" => "Saving the recording",
+        "shell.crash.body" => {
+            "Stinkshot hit an internal error and had to close. Details are in the log: {log}"
+        }
+        "shell.discard.quit" => "An Editor Window has unsaved edits. Quit and discard them?",
+        "shell.discard.update" => {
+            "An Editor Window has unsaved edits. Update now and discard them?"
+        }
         "shell.clipboard.failed" => "Could Not Copy to Clipboard",
         "shell.save_as.failed" => "Could Not Save the File",
         "shell.save_as.failed.body" => "The file could not be written there. Try another folder.",
@@ -302,18 +318,18 @@ pub fn get(key: &str) -> Option<&'static str> {
         "shell.ocr.item_none" => "This item has no recognizable text.",
         "shell.item.pin_failed" => "Could Not Pin",
         "shell.item.pin_failed.body" => {
-            "Only images can be pinned, and this one could not be loaded. It may have been moved or deleted."
+            "The image could not be loaded. It may have been moved or deleted."
         }
         "shell.item.edit_failed" => "Could Not Open for Editing",
         "shell.item.canvas_failed" => "Could Not Add to Canvas",
         "shell.canvas.name" => "Canvas",
         "shell.item.edit_failed.body" => {
-            "Only images can be edited, and this one could not be loaded. It may have been moved or deleted."
+            "The image could not be loaded. It may have been moved or deleted."
         }
         "shell.item.in_use" => "Close any program that has it open, then try again.",
         "shell.item.delete_failed" => "Could Not Delete",
         "shell.item.forget_failed.body" => {
-            "The file is in the Recycle Bin, but History could not forget it. Restart Stinkshot to refresh History."
+            "The file is in the Recycle Bin but still listed. Restart Stinkshot to refresh History."
         }
         "shell.item.open_failed.body" => {
             "Windows could not open it. Check that the file still exists."
@@ -349,13 +365,13 @@ pub fn get(key: &str) -> Option<&'static str> {
             "Global hotkeys are unavailable. Use the tray icon, or restart Stinkshot."
         }
         "shell.hotkey.prtsc_failed" => {
-            "Windows did not let Stinkshot take over PrtSc, so it may still open the Snipping Tool. Turn off Take Over PrintScreen or try again."
+            "Windows did not let Stinkshot take over PrtSc, so it may still open Snipping Tool. Turn off Take Over PrintScreen or try again."
         }
         "shell.hotkey.snip_thread_failed" => {
             "Stinkshot could not start its shortcut listener. Restart Stinkshot and try again."
         }
         "shell.hotkey.snip_failed" => {
-            "Windows did not let Stinkshot listen for Win+Shift+S and Win+Shift+R, so they still open the Snipping Tool. Turn the option off and on again, or restart Stinkshot."
+            "Windows did not let Stinkshot listen for Win+Shift+S and Win+Shift+R, so they still open Snipping Tool. Turn the option off and on again, or restart Stinkshot."
         }
         "shell.hotkey.not_set" => "Not Set",
         "shell.toggle.on" => "On",
@@ -378,9 +394,9 @@ pub fn get(key: &str) -> Option<&'static str> {
             "{key} ({action}) {phrase}. Pick a different key in Settings > Hotkeys."
         }
         "shell.about.version" => "Version {v}",
-        "shell.save_as.png" => "PNG image",
-        "shell.save_as.jpeg" => "JPEG image",
-        "shell.save_as.webp" => "WebP image",
+        "shell.save_as.png" => "PNG Image",
+        "shell.save_as.jpeg" => "JPEG Image",
+        "shell.save_as.webp" => "WebP Image",
         "shell.save_as.title" => "Save Capture As",
         "shell.trim.save_gif" => "Save GIF",
         "shell.trim.save_mp4" => "Save MP4",
@@ -463,6 +479,7 @@ pub const KEYS: &[&str] = &[
     "shell.toast.dismiss",
     "shell.toast.ocr_missing",
     "shell.tray.update_check_on",
+    "shell.tray.stop_recording",
     "shell.tray.offline",
     "shell.pin.copied",
     "shell.pin.copy_failed",
@@ -515,8 +532,9 @@ pub const KEYS: &[&str] = &[
     "shell.record.problem.body",
     "shell.record.problem.tail",
     "shell.record.problem",
+    "shell.record.disk_low",
+    "shell.record.disk_low.body",
     "shell.capture.window_failed",
-    "shell.edit.not_yet",
     "shell.scroll.stopped",
     "shell.scroll.stopped.body",
     "shell.scroll.failed.body",
@@ -625,6 +643,16 @@ pub const KEYS: &[&str] = &[
     "shell.item.unreadable",
     "shell.save.history_failed.body",
     "shell.save.history_failed",
+    "shell.save.history_failed.elsewhere",
+    "shell.save.history_failed.clipboard",
+    "shell.save.history_failed.lost",
+    "shell.saved.default_folder",
+    "shell.history_dir.back",
+    "shell.history_dir.back.body",
+    "shell.end_session.reason",
+    "shell.crash.body",
+    "shell.discard.quit",
+    "shell.discard.update",
     "shell.clipboard.failed",
     "shell.save_as.failed",
     "shell.save_as.failed.body",

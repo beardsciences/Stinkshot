@@ -58,7 +58,9 @@ pub fn scroll_at(at: PxPoint, notches: i32) {
     if notches == 0 {
         return;
     }
-    let orig = cursor_pos();
+    // None when Windows refused the position: there is then nothing to restore to (the
+    // default (0, 0) would throw the pointer into the corner of the primary monitor).
+    let orig = try_cursor_pos();
     // SAFETY: SetCursorPos/SendInput take plain values; the INPUT array outlives the call.
     unsafe {
         if let Err(e) = SetCursorPos(at.x, at.y) {
@@ -90,7 +92,9 @@ pub fn scroll_at(at: PxPoint, notches: i32) {
         }
         // Give the target time to dequeue the wheel messages before the pointer moves back.
         std::thread::sleep(std::time::Duration::from_millis(25));
-        let _ = SetCursorPos(orig.x, orig.y);
+        if let Some(orig) = orig {
+            let _ = SetCursorPos(orig.x, orig.y);
+        }
     }
 }
 

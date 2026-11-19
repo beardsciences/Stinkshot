@@ -21,8 +21,10 @@ const COLS: &str = "id, path, kind, created, width, height, app, window_title, s
 pub struct History {
     folder: PathBuf,
     conn: Mutex<Connection>,
-    /// The index was rebuilt after corruption: the next `rescan` takes the files it finds
-    /// back as this app's captures instead of marking them `EXTERNAL_MODE`.
+    /// The index was rebuilt after corruption: the next `rescan` takes the files that have
+    /// an edit sidecar (only this app writes those) back as this app's captures instead of
+    /// marking them `EXTERNAL_MODE`. Everything else stays external: retention must not
+    /// delete a picture it cannot prove this app made.
     adopt: std::sync::atomic::AtomicBool,
 }
 
@@ -236,7 +238,19 @@ fn open_connection(db: &Path) -> anyhow::Result<Connection> {
     let mode: String = conn.query_row("PRAGMA journal_mode = WAL", [], |r| r.get(0))?;
     log::debug!("history: journal mode {mode}");
     conn.pragma_update(None, "synchronous", "NORMAL")?;
+    // Deleted rows are overwritten with zeros, so the OCR text and window title of a
+    // deleted capture do not stay readable in the index file.
+    conn.pragma_update(None, "secure_delete", "ON")?;
     migrate(&conn)?;
+    // The same for the search index: without this FTS5 only marks a deleted row's words
+    // as gone and keeps them until a later merge. The setting is stored in the index
+    // (readable by SQLite 3.42 and later; every build of this app bundles a newer one).
+    if let Err(e) = conn.execute(
+        "INSERT INTO items_fts(items_fts, rank) VALUES('secure-delete', 1)",
+        [],
+    ) {
+        log::warn!("history: search index secure-delete not set: {e}");
+    }
     Ok(conn)
 }
 
@@ -346,6 +360,33 @@ impl History {
         &self.folder
     }
 
+    /// True when `path` is a file directly in this history folder. The index stores
+    /// absolute paths, so an index copied or moved from elsewhere (or a damaged one) can
+    /// name files in another folder; those rows are never handed out, deleted or opened.
+    /// A name with a wildcard is refused too: the shell would expand it when recycling.
+    fn owns(&self, path: &Path) -> bool {
+        let same = |a: &Path, b: &Path| {
+            let key = |p: &Path| -> Vec<String> {
+                p.components()
+                    .map(|c| c.as_os_str().to_string_lossy().to_lowercase())
+                    .collect()
+            };
+            key(a) == key(b)
+        };
+        let name = file_name_of(path);
+        !name.is_empty()
+            && !name.contains(['*', '?'])
+            && path.parent().is_some_and(|dir| same(dir, &self.folder))
+    }
+
+    /// Moves the write-ahead log into the index file and empties it, best effort, so what
+    /// was just deleted is not left readable in the log.
+    fn checkpoint(&self) {
+        if let Err(e) = self.lock().execute_batch("PRAGMA wal_checkpoint(TRUNCATE)") {
+            log::debug!("history: checkpoint: {e}");
+        }
+    }
+
     /// Index a file already written into the folder. Fills bytes/created from the file.
     /// Adding a path that is already indexed refreshes that row and returns its id.
     pub fn add(&self, item: NewItem) -> anyhow::Result<ItemId> {
@@ -364,15 +405,25 @@ impl History {
         let created = file_created_ms(&md);
         let bytes = md.len() as i64;
         let conn = self.lock();
-        let existing: Option<ItemId> = conn
-            .query_row("SELECT id FROM items WHERE path = ?1", [&path], |r| {
-                r.get(0)
-            })
+        let existing: Option<(ItemId, bool)> = conn
+            .query_row(
+                "SELECT id, starred FROM items WHERE path = ?1",
+                [&path],
+                |r| Ok((r.get(0)?, r.get::<_, i64>(1)? != 0)),
+            )
             .optional()?;
-        if let Some(id) = existing {
+        if let Some((id, was_starred)) = existing {
+            // A new capture under a name the index still knew: nothing of the old one
+            // carries over. The time is the last write, because Windows gives a file
+            // recreated under a recently deleted name the old creation time.
+            let written = md
+                .modified()
+                .map(|t| DateTime::<Local>::from(t).timestamp_millis())
+                .unwrap_or(created);
             conn.execute(
                 "UPDATE items SET kind=?2, width=?3, height=?4, app=?5, window_title=?6, \
-                 mode=?7, bytes=?8, name=?9, ocr_text=NULL WHERE id=?1",
+                 mode=?7, bytes=?8, name=?9, ocr_text=NULL, created=?10, starred=0 \
+                 WHERE id=?1",
                 params![
                     id,
                     kind_to_i(kind),
@@ -382,9 +433,15 @@ impl History {
                     item.window_title,
                     item.mode,
                     bytes,
-                    name
+                    name,
+                    written
                 ],
             )?;
+            drop(conn);
+            let _ = std::fs::remove_file(self.thumb_path(id));
+            if was_starred {
+                self.sync_starred();
+            }
             return Ok(id);
         }
         conn.execute(
@@ -414,7 +471,8 @@ impl History {
                 [id],
                 row_to_meta,
             )
-            .optional()?)
+            .optional()?
+            .filter(|m| self.owns(&m.path)))
     }
 
     pub fn find_by_path(&self, path: &Path) -> anyhow::Result<Option<ItemMeta>> {
@@ -425,7 +483,8 @@ impl History {
                 [path.to_string_lossy().as_ref()],
                 row_to_meta,
             )
-            .optional()?)
+            .optional()?
+            .filter(|m| self.owns(&m.path)))
     }
 
     pub fn query(&self, q: &Query) -> anyhow::Result<Vec<ItemMeta>> {
@@ -462,7 +521,9 @@ impl History {
         let conn = self.lock();
         let mut stmt = conn.prepare(&sql)?;
         let rows = stmt.query_map(rusqlite::params_from_iter(args), row_to_meta)?;
-        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+        let mut items = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+        items.retain(|m| self.owns(&m.path));
+        Ok(items)
     }
 
     /// Distinct apps with item counts, most frequent first. Items without an app are
@@ -554,11 +615,18 @@ impl History {
         let conn = self.lock();
         let mut stmt = conn.prepare(&sql)?;
         let rows = stmt.query_map([lim], row_to_meta)?;
-        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+        let mut items = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+        items.retain(|m| self.owns(&m.path));
+        Ok(items)
     }
 
     /// Removes the re-edit sidecar and thumbnail for a file, best effort.
     fn remove_artifacts(&self, id: ItemId, path: &Path) {
+        let _ = std::fs::remove_file(self.thumb_path(id));
+        if !self.owns(path) {
+            // Its sidecars, if any, are in a folder that is not this history's.
+            return;
+        }
         // The sidecar layout belongs to core; a failure there must not block deletion.
         let r = std::panic::catch_unwind(|| stinkshot_core::annotate::delete_editable(path));
         match r {
@@ -566,11 +634,17 @@ impl History {
             Ok(Err(e)) => log::warn!("history: delete sidecar for {}: {e:#}", path.display()),
             Err(_) => log::warn!("history: delete sidecar for {} panicked", path.display()),
         }
-        let _ = std::fs::remove_file(self.thumb_path(id));
     }
 
-    /// Deletes the file, its re-edit sidecar, thumbnail and index row.
+    /// Deletes the file, its re-edit sidecar, thumbnail and index row. A row whose path is
+    /// not a file of this folder (see `owns`) is left alone.
     pub fn delete(&self, id: ItemId) -> anyhow::Result<()> {
+        let r = self.delete_row(id);
+        self.checkpoint();
+        r
+    }
+
+    fn delete_row(&self, id: ItemId) -> anyhow::Result<()> {
         let Some(item) = self.get(id)? else {
             return Ok(());
         };
@@ -603,22 +677,38 @@ impl History {
 
     /// Remove non-starred items older than `keep_days` (0 = no age limit), then oldest
     /// non-starred until total bytes <= `max_bytes` (0 = no cap). Returns removed count.
-    /// The byte total includes starred items and files this app did not create
-    /// (`EXTERNAL_MODE`), which are never removed.
+    /// The byte total includes starred items, which are never removed. Files this app did
+    /// not create (`EXTERNAL_MODE`) are neither removed nor counted: the cap is on what
+    /// Stinkshot keeps, and a total it cannot bring down would cost every own capture.
     pub fn apply_retention(&self, keep_days: u32, max_bytes: u64) -> anyhow::Result<u32> {
+        let removed = self.retain(keep_days, max_bytes);
+        if !matches!(removed, Ok(0)) {
+            self.checkpoint();
+        }
+        removed
+    }
+
+    fn retain(&self, keep_days: u32, max_bytes: u64) -> anyhow::Result<u32> {
         let mut removed = 0u32;
         if keep_days > 0 {
             let cutoff = Local::now().timestamp_millis() - i64::from(keep_days) * 86_400_000;
             let ids: Vec<ItemId> = {
                 let conn = self.lock();
                 let mut stmt = conn.prepare(
-                    "SELECT id FROM items WHERE starred = 0 AND mode <> ?2 AND created < ?1",
+                    "SELECT id, path FROM items \
+                     WHERE starred = 0 AND mode <> ?2 AND created < ?1",
                 )?;
-                let rows = stmt.query_map(params![cutoff, EXTERNAL_MODE], |r| r.get(0))?;
-                rows.collect::<rusqlite::Result<Vec<_>>>()?
+                let rows = stmt.query_map(params![cutoff, EXTERNAL_MODE], |r| {
+                    Ok((r.get::<_, ItemId>(0)?, r.get::<_, String>(1)?))
+                })?;
+                let rows = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+                rows.into_iter()
+                    .filter(|(_, p)| self.owns(Path::new(p)))
+                    .map(|(id, _)| id)
+                    .collect()
             };
             for id in ids {
-                match self.delete(id) {
+                match self.delete_row(id) {
                     Ok(()) => removed += 1,
                     Err(e) => log::warn!("history: retention could not delete {id}: {e:#}"),
                 }
@@ -629,7 +719,7 @@ impl History {
             let rows: Vec<(ItemId, PathBuf, i64, bool)> = {
                 let conn = self.lock();
                 let mut stmt = conn.prepare(
-                    "SELECT id, path, bytes, starred OR mode = ?1 FROM items \
+                    "SELECT id, path, bytes, starred FROM items WHERE mode <> ?1 \
                      ORDER BY created ASC, id ASC",
                 )?;
                 let rows = stmt.query_map([EXTERNAL_MODE], |r| {
@@ -645,6 +735,9 @@ impl History {
             let mut total = 0i64;
             let mut candidates: Vec<(ItemId, i64)> = Vec::new();
             for (id, path, bytes, kept) in rows {
+                if !self.owns(&path) {
+                    continue;
+                }
                 let size = self.disk_size(id, &path, bytes);
                 total = total.saturating_add(size);
                 if !kept {
@@ -655,7 +748,7 @@ impl History {
                 if total <= cap {
                     break;
                 }
-                match self.delete(id) {
+                match self.delete_row(id) {
                     Ok(()) => {
                         removed += 1;
                         total -= size;
@@ -670,7 +763,10 @@ impl History {
     /// Sync index with folder: add files the user dropped in (png/jpg/webp/mp4/gif, not
     /// under .stinkshot), drop rows whose files vanished. Returns (added, removed).
     /// Added files are marked `EXTERNAL_MODE`, except on the first pass over an index
-    /// rebuilt after corruption, where they are this app's captures coming back.
+    /// rebuilt after corruption, where a file with an edit sidecar is this app's capture
+    /// coming back. A row that names a file elsewhere, or one that is gone, is pointed at
+    /// the file of that name here when there is one (the folder was moved, renamed or
+    /// copied), so its app, title, text and star are kept.
     pub fn rescan(&self) -> anyhow::Result<(u32, u32)> {
         // Filesystem work first, without holding the database lock.
         let mut on_disk: Vec<(PathBuf, ItemKind, std::fs::Metadata)> = Vec::new();
@@ -687,7 +783,7 @@ impl History {
                 on_disk.push((path, kind, md));
             }
         }
-        let known: HashMap<String, (ItemId, PathBuf)> = {
+        let mut known: HashMap<String, (ItemId, PathBuf)> = {
             let conn = self.lock();
             let mut stmt = conn.prepare("SELECT id, path FROM items")?;
             let rows =
@@ -700,14 +796,44 @@ impl History {
             m
         };
 
+        let moved: Vec<(String, ItemId, PathBuf)> = known
+            .iter()
+            .filter(|(_, (_, p))| !self.owns(p) || !p.exists())
+            .filter_map(|(key, (id, p))| {
+                let here = self.folder.join(p.file_name()?);
+                (self.owns(&here) && here.is_file()).then(|| (key.clone(), *id, here))
+            })
+            .collect();
+        for (old_key, id, here) in moved {
+            let key = here.to_string_lossy().to_lowercase();
+            if known.contains_key(&key) {
+                continue;
+            }
+            let res = self.lock().execute(
+                "UPDATE items SET path = ?2, name = ?3 WHERE id = ?1",
+                params![id, here.to_string_lossy().as_ref(), file_name_of(&here)],
+            );
+            match res {
+                Ok(_) => {
+                    known.remove(&old_key);
+                    known.insert(key, (id, here));
+                }
+                Err(e) => log::warn!("history: rescan could not re-point {id}: {e}"),
+            }
+        }
+
         let stars = self.saved_stars();
         let adopt = self.adopt.load(std::sync::atomic::Ordering::Relaxed);
-        let mode = if adopt { "" } else { EXTERNAL_MODE };
         let mut added = 0u32;
         for (path, kind, md) in &on_disk {
             if known.contains_key(&path.to_string_lossy().to_lowercase()) {
                 continue;
             }
+            let mode = if adopt && stinkshot_core::annotate::has_editable(path) {
+                ""
+            } else {
+                EXTERNAL_MODE
+            };
             let (w, h) = if *kind == ItemKind::Video {
                 (0, 0)
             } else {
@@ -740,7 +866,8 @@ impl History {
 
         let mut removed = 0u32;
         for (id, path) in known.values() {
-            if path.exists() {
+            // A row still naming a file that is not in this folder goes too (the row only).
+            if self.owns(path) && path.exists() {
                 continue;
             }
             self.remove_artifacts(*id, path);
@@ -748,6 +875,9 @@ impl History {
                 Ok(n) => removed += n as u32,
                 Err(e) => log::warn!("history: rescan could not drop {id}: {e}"),
             }
+        }
+        if removed > 0 {
+            self.checkpoint();
         }
         Ok((added, removed))
     }
@@ -781,15 +911,21 @@ impl History {
                 return Ok(Some(thumb));
             }
         }
-        let img =
-            image::open(&item.path).with_context(|| format!("decode {}", item.path.display()))?;
-        let small = if img.width() <= max_size && img.height() <= max_size {
-            img.to_rgba8()
-        } else {
-            img.resize(max_size, max_size, image::imageops::FilterType::Lanczos3)
-                .to_rgba8()
-        };
-        write_png_atomic(&thumb, &small)?;
+        let mut reader = image::ImageReader::open(&item.path)
+            .and_then(|r| r.with_guessed_format())
+            .with_context(|| format!("open {}", item.path.display()))?;
+        // A long scrolling capture is larger than the decoder's default allowance.
+        reader.limits(stinkshot_core::image::decode_limits());
+        let img = reader
+            .decode()
+            .with_context(|| format!("decode {}", item.path.display()))?
+            .to_rgba8();
+        let (w, h) = img.dimensions();
+        // Same size contract as a plain resize (fits max_size, never upscales), but it
+        // averages blocks first, which is much faster on a big picture.
+        let small =
+            stinkshot_core::Rgba::from_raw(w, h, img.into_raw()).thumbnail(max_size, max_size);
+        self.store_thumbnail(id, &small)?;
         Ok(Some(thumb))
     }
 
@@ -797,6 +933,69 @@ impl History {
         let img = image::RgbaImage::from_raw(thumb.width, thumb.height, thumb.data.clone())
             .context("thumbnail buffer does not match its dimensions")?;
         write_png_atomic(&self.thumb_path(id), &img)
+    }
+}
+
+// ---------------------------------------------------------------------------------------
+// Retention preview (read-only), for the confirmation in Settings > History.
+// ---------------------------------------------------------------------------------------
+
+impl History {
+    /// What `apply_retention(keep_days, max_bytes)` would remove right now, without removing
+    /// anything: `(items, bytes freed)`. Same rules and order as `apply_retention`. Stats
+    /// files like it does, so call it from a worker thread.
+    pub fn retention_preview(&self, keep_days: u32, max_bytes: u64) -> anyhow::Result<(u32, u64)> {
+        let cutoff = (keep_days > 0)
+            .then(|| Local::now().timestamp_millis() - i64::from(keep_days) * 86_400_000);
+        // Like `retain`: files this app did not create, and rows outside this folder, are
+        // neither removed nor counted.
+        let rows: Vec<(ItemId, PathBuf, i64, i64, bool)> = {
+            let conn = self.lock();
+            let mut stmt = conn.prepare(
+                "SELECT id, path, bytes, created, starred FROM items WHERE mode <> ?1                  ORDER BY created ASC, id ASC",
+            )?;
+            let rows = stmt.query_map([EXTERNAL_MODE], |r| {
+                Ok((
+                    r.get(0)?,
+                    PathBuf::from(r.get::<_, String>(1)?),
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get::<_, i64>(4)? != 0,
+                ))
+            })?;
+            let rows = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+            rows.into_iter().filter(|r| self.owns(&r.1)).collect()
+        };
+        let (mut count, mut freed, mut total) = (0u32, 0i64, 0i64);
+        let mut candidates: Vec<i64> = Vec::new();
+        for (id, path, bytes, created, kept) in rows {
+            let aged_out = !kept && cutoff.is_some_and(|c| created < c);
+            if !aged_out && max_bytes == 0 {
+                continue;
+            }
+            let size = self.disk_size(id, &path, bytes);
+            if aged_out {
+                count += 1;
+                freed = freed.saturating_add(size);
+                continue;
+            }
+            total = total.saturating_add(size);
+            if !kept {
+                candidates.push(size);
+            }
+        }
+        if max_bytes > 0 {
+            let cap = i64::try_from(max_bytes).unwrap_or(i64::MAX);
+            for size in candidates {
+                if total <= cap {
+                    break;
+                }
+                count += 1;
+                freed = freed.saturating_add(size);
+                total -= size;
+            }
+        }
+        Ok((count, u64::try_from(freed).unwrap_or(0)))
     }
 }
 
@@ -1361,7 +1560,10 @@ mod tests {
     fn stars_survive_a_corrupt_index_and_retention_spares_them() {
         let t = Tmp::new();
         let p = write_png(&t.0, "keep.png", 4, 4);
-        write_png(&t.0, "other.png", 4, 4);
+        let other = write_png(&t.0, "other.png", 4, 4);
+        // Both were edited in the app, which is what a rebuilt index knows them by.
+        give_sidecar(&p);
+        give_sidecar(&other);
         {
             let h = History::open(&t.0).unwrap();
             let id = h.add(new_item(p.clone(), "", "")).unwrap();
@@ -1491,5 +1693,258 @@ mod tests {
             j.join().unwrap();
         }
         assert_eq!(h.stats().unwrap().count, 20);
+    }
+
+    /// An edit sidecar like the app writes for an annotated capture.
+    fn give_sidecar(path: &Path) {
+        let base = stinkshot_core::Rgba::new(4, 4);
+        let mut doc = stinkshot_core::annotate::Doc::new(4, 4);
+        doc.add(
+            stinkshot_core::annotate::ShapeKind::Line {
+                from: stinkshot_core::geom::PtF { x: 0.0, y: 0.0 },
+                to: stinkshot_core::geom::PtF { x: 3.0, y: 3.0 },
+            },
+            stinkshot_core::annotate::Style::default(),
+        );
+        stinkshot_core::annotate::save_editable(path, &base, &doc).unwrap();
+    }
+
+    fn all(h: &History) -> Vec<ItemMeta> {
+        h.query(&Query::default()).unwrap()
+    }
+
+    fn copy_tree(from: &Path, to: &Path) {
+        std::fs::create_dir_all(to).unwrap();
+        for e in std::fs::read_dir(from).unwrap().flatten() {
+            let dest = to.join(e.file_name());
+            if e.path().is_dir() {
+                copy_tree(&e.path(), &dest);
+            } else {
+                std::fs::copy(e.path(), dest).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn a_rebuilt_index_does_not_take_over_the_users_own_files() {
+        let t = Tmp::new();
+        // The folder is shared with other things: a photo and a clip the user put there.
+        let photo = write_png(&t.0, "holiday.png", 4, 4);
+        let clip = t.0.join("birthday.mp4");
+        std::fs::write(&clip, vec![0u8; 5000]).unwrap();
+        // And one capture the app made and edited.
+        let own = write_png(&t.0, "Stinkshot_1.png", 4, 4);
+        give_sidecar(&own);
+        std::fs::create_dir_all(t.0.join(".stinkshot")).unwrap();
+        std::fs::write(
+            t.0.join(".stinkshot").join("index.sqlite"),
+            vec![0x42u8; 4096],
+        )
+        .unwrap();
+        let h = History::open(&t.0).unwrap();
+        assert_eq!(h.rescan().unwrap(), (3, 0));
+        assert_eq!(h.find_by_path(&photo).unwrap().unwrap().mode, EXTERNAL_MODE);
+        assert_eq!(h.find_by_path(&clip).unwrap().unwrap().mode, EXTERNAL_MODE);
+        assert_eq!(h.find_by_path(&own).unwrap().unwrap().mode, "");
+        // Everything is years old and far over the cap.
+        for m in all(&h) {
+            set_created(&h, m.id, 1000);
+        }
+        assert_eq!(h.apply_retention(1, 1).unwrap(), 1);
+        assert!(photo.exists());
+        assert!(clip.exists());
+        assert!(!own.exists());
+        // A later rescan (files dropped in afterwards) never adopts.
+        let later = write_png(&t.0, "later.png", 4, 4);
+        give_sidecar(&later);
+        h.rescan().unwrap();
+        assert_eq!(h.find_by_path(&later).unwrap().unwrap().mode, EXTERNAL_MODE);
+    }
+
+    #[test]
+    fn the_size_cap_does_not_count_files_it_cannot_remove() {
+        let t = Tmp::new();
+        let h = History::open(&t.0).unwrap();
+        let a = add_sized(&h, &t.0, "a.png", 100, 1000, false);
+        let b = add_sized(&h, &t.0, "b.png", 100, 2000, false);
+        // Far bigger than the cap, and not this app's.
+        std::fs::write(t.0.join("movie.mp4"), vec![0u8; 50_000]).unwrap();
+        assert_eq!(h.rescan().unwrap(), (1, 0));
+        // Own captures use 200 of 250: nothing to do.
+        assert_eq!(h.apply_retention(0, 250).unwrap(), 0);
+        assert!(h.get(a).unwrap().is_some());
+        assert!(h.get(b).unwrap().is_some());
+        // Over the cap on their own: oldest goes, the external file stays.
+        assert_eq!(h.apply_retention(0, 150).unwrap(), 1);
+        assert!(h.get(a).unwrap().is_none());
+        assert!(h.get(b).unwrap().is_some());
+        assert!(t.0.join("movie.mp4").exists());
+    }
+
+    #[test]
+    fn a_moved_folder_keeps_its_metadata() {
+        let outer = Tmp::new();
+        let before = outer.0.join("Shots");
+        let after = outer.0.join("Screenshots");
+        std::fs::create_dir_all(&before).unwrap();
+        let id = {
+            let h = History::open(&before).unwrap();
+            let p = write_png(&before, "a.png", 6, 4);
+            let id = h.add(new_item(p, "firefox", "Invoice")).unwrap();
+            h.set_starred(id, true).unwrap();
+            h.set_ocr_text(id, "total due").unwrap();
+            id
+        };
+        std::fs::rename(&before, &after).unwrap();
+        let h = History::open(&after).unwrap();
+        // Until the rescan the row names a file that is not in this folder: not handed out.
+        assert!(h.get(id).unwrap().is_none());
+        assert_eq!(h.rescan().unwrap(), (0, 0));
+        let m = h.get(id).unwrap().unwrap();
+        assert_eq!(m.path, after.join("a.png"));
+        assert_eq!(
+            (m.app.as_str(), m.mode.as_str(), m.starred),
+            ("firefox", "region", true)
+        );
+        assert_eq!(m.ocr_text.as_deref(), Some("total due"));
+        assert_eq!(h.query(&text_query("due")).unwrap().len(), 1);
+        assert_eq!(all(&h).len(), 1);
+    }
+
+    #[test]
+    fn rows_from_another_folder_are_never_deleted_or_handed_out() {
+        let outer = Tmp::new();
+        let original = outer.0.join("Original");
+        let copy = outer.0.join("Copy");
+        std::fs::create_dir_all(&original).unwrap();
+        let (kept, only_there) = {
+            let h = History::open(&original).unwrap();
+            let kept = h
+                .add(new_item(write_png(&original, "kept.png", 4, 4), "a", ""))
+                .unwrap();
+            let only = h
+                .add(new_item(write_png(&original, "only.png", 4, 4), "b", ""))
+                .unwrap();
+            for id in [kept, only] {
+                set_created(&h, id, 1000);
+            }
+            (kept, only)
+        };
+        // The user copies the folder and points the app at the copy; one file did not
+        // come along.
+        copy_tree(&original, &copy);
+        std::fs::remove_file(copy.join("only.png")).unwrap();
+        let h = History::open(&copy).unwrap();
+        // The copied index still names the files of the original folder.
+        assert!(all(&h).is_empty());
+        assert!(h.get(kept).unwrap().is_none());
+        assert!(h.thumbnail(kept, 32).unwrap().is_none());
+        assert!(h.pending_ocr(0).unwrap().is_empty());
+        h.delete(kept).unwrap();
+        assert_eq!(h.apply_retention(1, 1).unwrap(), 0);
+        assert!(original.join("kept.png").exists());
+        assert!(original.join("only.png").exists());
+        // The rescan points the row at the file here, and forgets the one that is not.
+        assert_eq!(h.rescan().unwrap(), (0, 1));
+        assert_eq!(h.get(kept).unwrap().unwrap().path, copy.join("kept.png"));
+        assert!(h.get(only_there).unwrap().is_none());
+        assert_eq!(h.stats().unwrap().count, 1);
+        // Now retention works on the copy, and only on the copy.
+        assert_eq!(h.apply_retention(1, 0).unwrap(), 1);
+        assert!(!copy.join("kept.png").exists());
+        assert!(original.join("kept.png").exists());
+        assert!(original.join("only.png").exists());
+    }
+
+    #[test]
+    fn a_wildcard_path_in_the_index_is_inert() {
+        let t = Tmp::new();
+        let h = History::open(&t.0).unwrap();
+        let real = write_png(&t.0, "real.png", 4, 4);
+        let id = h.add(new_item(real.clone(), "", "")).unwrap();
+        // A damaged or crafted row: the shell would expand this to every PNG here.
+        h.lock()
+            .execute(
+                "INSERT INTO items (path, name, kind, created) VALUES (?1, '*.png', 0, 1000)",
+                [t.0.join("*.png").to_string_lossy().as_ref()],
+            )
+            .unwrap();
+        let bad = h.lock().last_insert_rowid();
+        assert!(!h.owns(&t.0.join("*.png")));
+        assert!(!h.owns(&t.0.join("wh?t.png")));
+        assert!(!h.owns(&t.0.join("sub").join("x.png")));
+        assert!(!h.owns(&t.0));
+        assert!(h.owns(&PathBuf::from(real.to_string_lossy().to_uppercase())));
+        assert!(h.get(bad).unwrap().is_none());
+        assert_eq!(all(&h).len(), 1);
+        h.delete(bad).unwrap();
+        assert_eq!(h.apply_retention(1, 0).unwrap(), 0);
+        assert!(real.exists());
+        assert_eq!(h.rescan().unwrap(), (0, 1));
+        assert!(h.get(id).unwrap().is_some());
+        assert_eq!(h.stats().unwrap().count, 1);
+    }
+
+    #[test]
+    fn adding_over_a_known_path_starts_the_item_afresh() {
+        let t = Tmp::new();
+        let h = History::open(&t.0).unwrap();
+        let p = write_png(&t.0, "shot.png", 8, 8);
+        let id = h.add(new_item(p.clone(), "old", "old title")).unwrap();
+        h.set_starred(id, true).unwrap();
+        set_created(&h, id, 1000);
+        // The file is replaced by a new capture under the same name.
+        write_png(&t.0, "shot.png", 10, 6);
+        assert_eq!(h.add(new_item(p, "new", "")).unwrap(), id);
+        let m = h.get(id).unwrap().unwrap();
+        assert!(!m.starred);
+        assert!(m.created.timestamp_millis() > Local::now().timestamp_millis() - 60_000);
+        assert_eq!((m.width, m.height, m.app.as_str()), (10, 6, "new"));
+        assert!(h.saved_stars().is_empty());
+    }
+
+    #[test]
+    fn deleted_text_does_not_stay_in_the_index_files() {
+        let t = Tmp::new();
+        let h = History::open(&t.0).unwrap();
+        let on: i64 = h
+            .lock()
+            .query_row("PRAGMA secure_delete", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(on, 1);
+        let p = write_png(&t.0, "a.png", 4, 4);
+        let id = h
+            .add(new_item(p, "bank", "Zyxwvut Account 99887766"))
+            .unwrap();
+        h.set_ocr_text(id, "qqsecretphraseqq").unwrap();
+        h.delete(id).unwrap();
+        let meta = t.0.join(".stinkshot");
+        let wal = std::fs::metadata(meta.join("index.sqlite-wal")).map(|m| m.len());
+        assert_eq!(wal.unwrap_or(0), 0, "log emptied after a delete");
+        let db = std::fs::read(meta.join("index.sqlite")).unwrap();
+        let has = |needle: &[u8]| db.windows(needle.len()).any(|w| w == needle);
+        assert!(!has(b"qqsecretphraseqq"));
+        assert!(!has(b"99887766"));
+    }
+
+    #[test]
+    fn retention_preview_matches_apply_and_deletes_nothing() {
+        let t = Tmp::new();
+        let h = History::open(&t.0).unwrap();
+        let now = Local::now().timestamp_millis();
+        let day = 86_400_000;
+        add_sized(&h, &t.0, "old.png", 100, now - 90 * day, false);
+        add_sized(&h, &t.0, "olds.png", 100, now - 90 * day, true);
+        add_sized(&h, &t.0, "mid.png", 100, now - 5 * day, false);
+        add_sized(&h, &t.0, "new.png", 100, now - day, false);
+        assert_eq!(h.retention_preview(0, 0).unwrap(), (0, 0));
+        assert_eq!(h.retention_preview(30, 0).unwrap(), (1, 100));
+        // Age removes old; 300 left with a 250 cap: mid goes too (the starred one stays).
+        assert_eq!(h.retention_preview(30, 250).unwrap(), (2, 200));
+        assert_eq!(h.retention_preview(0, 250).unwrap(), (2, 200));
+        assert_eq!(h.stats().unwrap().count, 4);
+        assert!(t.0.join("old.png").exists());
+        assert_eq!(h.apply_retention(30, 250).unwrap(), 2);
+        assert_eq!(h.retention_preview(30, 250).unwrap(), (0, 0));
     }
 }

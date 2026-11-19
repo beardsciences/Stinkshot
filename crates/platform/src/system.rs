@@ -1,5 +1,7 @@
 use std::cell::RefCell;
 use std::path::Path;
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicIsize, Ordering};
 use std::sync::mpsc::Sender;
 
 use windows::Win32::Foundation::{
@@ -12,13 +14,15 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::RemoteDesktop::{
     NOTIFY_FOR_THIS_SESSION, WTSRegisterSessionNotification,
 };
+use windows::Win32::System::Shutdown::{ShutdownBlockReasonCreate, ShutdownBlockReasonDestroy};
 use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::UI::Shell::{SHOpenFolderAndSelectItems, SHParseDisplayName, ShellExecuteW};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DispatchMessageW, FindWindowExW, GetMessageW, HWND_MESSAGE,
-    MSG, PBT_APMRESUMEAUTOMATIC, RegisterClassW, SMTO_ABORTIFHUNG, SW_SHOWNORMAL,
-    SendMessageTimeoutW, TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WM_COPYDATA,
-    WM_DISPLAYCHANGE, WM_POWERBROADCAST, WM_WTSSESSION_CHANGE, WNDCLASSW, WS_EX_NOACTIVATE,
+    ChangeWindowMessageFilterEx, CreateWindowExW, DefWindowProcW, DispatchMessageW, FindWindowExW,
+    GetMessageW, HWND_MESSAGE, MSG, MSGFLT_ALLOW, PBT_APMRESUMEAUTOMATIC, PostMessageW,
+    RegisterClassW, SMTO_ABORTIFHUNG, SW_SHOWNORMAL, SendMessageTimeoutW, TranslateMessage,
+    WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_COPYDATA, WM_DISPLAYCHANGE, WM_ENDSESSION,
+    WM_POWERBROADCAST, WM_QUERYENDSESSION, WM_WTSSESSION_CHANGE, WNDCLASSW, WS_EX_NOACTIVATE,
     WS_EX_TOOLWINDOW, WS_POPUP, WTS_CONSOLE_CONNECT, WTS_SESSION_UNLOCK,
 };
 use windows::core::{PCWSTR, w};
@@ -384,7 +388,14 @@ pub fn start_ipc_listener(tx: Sender<Vec<String>>) -> anyhow::Result<()> {
                     None,
                 );
                 match hwnd {
-                    Ok(_) => {
+                    Ok(hwnd) => {
+                        // UIPI drops WM_COPYDATA from a lower integrity level, so a normal
+                        // launch could not reach an instance running as administrator.
+                        if let Err(e) =
+                            ChangeWindowMessageFilterEx(hwnd, WM_COPYDATA, MSGFLT_ALLOW, None)
+                        {
+                            log::debug!("IPC window message filter: {e}");
+                        }
                         let _ = ready_tx.send(Ok(()));
                     }
                     Err(e) => {
@@ -414,11 +425,78 @@ pub enum SessionEvent {
     DisplayChange,
     /// Resumed from sleep or hibernation.
     Resume,
+    /// Windows is shutting down, restarting or signing the user out (`WM_ENDSESSION` with
+    /// the session really ending). The end-session handler has already run.
+    EndSession,
+}
+
+/// Step of a Windows shutdown, restart or sign-out, passed to the handler set with
+/// `set_end_session_handler`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EndSessionPhase {
+    /// `WM_QUERYENDSESSION`: the session is about to end (it can still be cancelled). Start
+    /// finishing work here and return true when that needs time: Windows is then given the
+    /// handler's reason text and waits instead of ending the process after a few seconds.
+    Query,
+    /// `WM_ENDSESSION`, session ending: the last chance to do exit work, synchronously. The
+    /// process may be ended as soon as the handler returns.
+    End,
+    /// `WM_ENDSESSION`, the shutdown was cancelled: keep running.
+    Cancelled,
+}
+
+struct EndSessionHandler {
+    /// NUL-terminated text Windows shows while it waits for this app.
+    reason: Vec<u16>,
+    run: Box<dyn Fn(EndSessionPhase) -> bool + Send + Sync>,
+}
+
+static END_SESSION: OnceLock<EndSessionHandler> = OnceLock::new();
+/// The session watcher window, for `end_session_work_done`.
+static SESSION_HWND: AtomicIsize = AtomicIsize::new(0);
+/// Posted to the session window to drop its shutdown block reason on its own thread.
+const WM_UNBLOCK_SHUTDOWN: u32 = WM_APP + 1;
+
+/// Set what runs when Windows ends the session (`EndSessionPhase`). `run` is called on the
+/// session watcher's thread (`start_session_watcher`), inside the window procedure; its
+/// return value only matters for `Query`. `reason` is the short text Windows shows while it
+/// waits. Only the first call takes effect.
+pub fn set_end_session_handler(
+    reason: &str,
+    run: impl Fn(EndSessionPhase) -> bool + Send + Sync + 'static,
+) {
+    let _ = END_SESSION.set(EndSessionHandler {
+        reason: wide(reason),
+        run: Box::new(run),
+    });
+}
+
+/// The work announced by returning true from `EndSessionPhase::Query` is done: stop holding
+/// the shutdown up. Safe from any thread; a no-op when nothing is held.
+pub fn end_session_work_done() {
+    let hwnd = SESSION_HWND.load(Ordering::SeqCst);
+    if hwnd != 0 {
+        // SAFETY: posting to a window of this process; a stale handle only fails the call.
+        let _ = unsafe {
+            PostMessageW(
+                Some(HWND(hwnd as *mut _)),
+                WM_UNBLOCK_SHUTDOWN,
+                WPARAM(0),
+                LPARAM(0),
+            )
+        };
+    }
+}
+
+/// Whether `WM_ENDSESSION`'s wParam says the session is really ending (pure, for tests).
+fn session_ending(wparam: usize) -> bool {
+    wparam != 0
 }
 
 /// Map a window message to a session event (pure, for tests).
 fn session_event(msg: u32, wparam: usize) -> Option<SessionEvent> {
     match msg {
+        WM_ENDSESSION if session_ending(wparam) => Some(SessionEvent::EndSession),
         WM_WTSSESSION_CHANGE
             if wparam == WTS_SESSION_UNLOCK as usize || wparam == WTS_CONSOLE_CONNECT as usize =>
         {
@@ -442,6 +520,40 @@ unsafe extern "system" fn session_wndproc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    match msg {
+        WM_QUERYENDSESSION => {
+            if let Some(h) = END_SESSION.get()
+                && (h.run)(EndSessionPhase::Query)
+            {
+                // SAFETY: called on the thread that owns `hwnd`; the text is NUL-terminated
+                // and lives in a static.
+                if let Err(e) =
+                    unsafe { ShutdownBlockReasonCreate(hwnd, PCWSTR(h.reason.as_ptr())) }
+                {
+                    log::debug!("ShutdownBlockReasonCreate: {e}");
+                }
+            }
+            // Never veto the shutdown: the reason above only buys time.
+            return LRESULT(1);
+        }
+        WM_ENDSESSION => {
+            if let Some(h) = END_SESSION.get() {
+                (h.run)(if session_ending(wparam.0) {
+                    EndSessionPhase::End
+                } else {
+                    EndSessionPhase::Cancelled
+                });
+            }
+            // SAFETY: called on the thread that owns `hwnd`; fails harmlessly with no reason.
+            let _ = unsafe { ShutdownBlockReasonDestroy(hwnd) };
+        }
+        WM_UNBLOCK_SHUTDOWN => {
+            // SAFETY: as above.
+            let _ = unsafe { ShutdownBlockReasonDestroy(hwnd) };
+            return LRESULT(0);
+        }
+        _ => {}
+    }
     if let Some(ev) = session_event(msg, wparam.0) {
         SESSION_TX.with(|t| {
             if let Some(tx) = t.borrow().as_ref() {
@@ -453,10 +565,12 @@ unsafe extern "system" fn session_wndproc(
     unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
 }
 
-/// Watch for unlock, display changes and resume on a hidden window on its own thread, and
-/// send each to `tx`. A message-only window would not get the broadcast display and power
-/// messages, so this is a never-shown top-level tool window. Failure is logged by the caller
-/// and only costs the re-warm-up.
+/// Watch for unlock, display changes, resume and the end of the session on a hidden window
+/// on its own thread, and send each to `tx`. The end of the session also runs the handler
+/// set with `set_end_session_handler` (set it first). A message-only window would not get the
+/// broadcast display, power and end-session messages, so this is a never-shown top-level
+/// tool window. Failure is logged by the caller; it costs the re-warm-up and the exit work
+/// at shutdown.
 pub fn start_session_watcher(tx: Sender<SessionEvent>) -> anyhow::Result<()> {
     let (ready_tx, ready_rx) = std::sync::mpsc::channel::<anyhow::Result<()>>();
     std::thread::Builder::new()
@@ -501,6 +615,7 @@ pub fn start_session_watcher(tx: Sender<SessionEvent>) -> anyhow::Result<()> {
                     // Display and power events still arrive.
                     log::debug!("session watcher: no lock/unlock notifications: {e}");
                 }
+                SESSION_HWND.store(hwnd.0 as isize, Ordering::SeqCst);
                 let _ = ready_tx.send(Ok(()));
                 let mut msg = MSG::default();
                 while GetMessageW(&mut msg, None, 0, 0).as_bool() {
@@ -601,5 +716,19 @@ mod tests {
         // PBT_APMSUSPEND (4).
         assert_eq!(session_event(WM_POWERBROADCAST, 4), None);
         assert_eq!(session_event(WM_COPYDATA, 0), None);
+    }
+
+    #[test]
+    fn end_session_only_when_the_session_really_ends() {
+        assert_eq!(
+            session_event(WM_ENDSESSION, 1),
+            Some(SessionEvent::EndSession)
+        );
+        // wParam FALSE: the shutdown was cancelled after the query.
+        assert_eq!(session_event(WM_ENDSESSION, 0), None);
+        // The query itself is not an event: it can still be cancelled.
+        assert_eq!(session_event(WM_QUERYENDSESSION, 0), None);
+        assert!(session_ending(1));
+        assert!(!session_ending(0));
     }
 }

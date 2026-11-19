@@ -56,8 +56,17 @@ pub(crate) fn apply_destructive(work: &mut Rgba, shapes: &[&Shape], baked: &[Sha
 /// drawn before it inside its rectangle. The effect then also runs on the canvas, so what
 /// was drawn under it is hidden like the image is.
 fn vector_under(shapes: &[&Shape], i: usize, fonts: &Fonts) -> bool {
+    !matches!(shapes[i].kind, ShapeKind::Redact { .. }) && covers_a_shape(shapes, i, fonts)
+}
+
+/// True when `shapes[i]` is a Blur, Pixelate or Redact with a vector shape (text, a pasted
+/// picture, the pointer, a pen stroke, ...) drawn before it inside its rectangle: the
+/// output hides part of that shape.
+pub(crate) fn covers_a_shape(shapes: &[&Shape], i: usize, fonts: &Fonts) -> bool {
     let rect = match &shapes[i].kind {
-        ShapeKind::Blur { rect, .. } | ShapeKind::Pixelate { rect, .. } => norm(*rect).to_px(),
+        ShapeKind::Blur { rect, .. }
+        | ShapeKind::Pixelate { rect, .. }
+        | ShapeKind::Redact { rect } => norm(*rect).to_px(),
         _ => return false,
     };
     shapes[..i].iter().any(|s| {

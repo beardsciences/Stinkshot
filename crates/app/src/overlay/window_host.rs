@@ -237,6 +237,21 @@ impl EditorWindow {
         self.item
     }
 
+    /// Annotations that closing the window now would lose (what the Discard Changes prompt
+    /// asks about).
+    pub fn has_unsaved_edits(&self) -> bool {
+        !self.ov.closed && self.ov.has_unsaved_edits()
+    }
+
+    /// The History folder changed under this window: stop editing its item, so Save adds a
+    /// new item instead of overwriting whatever has that id in the new folder.
+    pub fn forget_item(&mut self) {
+        self.item = None;
+        if let Some(meta) = &mut self.ov.annotate_meta {
+            meta.1 = None;
+        }
+    }
+
     /// A canvas made by Add to Canvas (pictures get added to it).
     pub fn is_canvas(&self) -> bool {
         self.ov.is_canvas()

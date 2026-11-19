@@ -5,10 +5,26 @@ use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use log::{LevelFilter, Log, Metadata, Record};
 
 const MAX_BYTES: u64 = 5 * 1024 * 1024;
+
+/// Only the long-running instance rotates (`allow_rotation`). A short-lived process
+/// (`stinkshot quit`, a forwarded command, a headless capture) renaming the file would leave
+/// the running instance writing into `stinkshot.log.1` through its open handle.
+static ROTATE: AtomicBool = AtomicBool::new(false);
+
+/// Call once this process is the instance that owns the profile.
+pub fn allow_rotation() {
+    ROTATE.store(true, Ordering::Relaxed);
+}
+
+/// Whether a log of `written` bytes is due for rotation by this process.
+fn rotation_due(written: u64, owner: bool) -> bool {
+    owner && written >= MAX_BYTES
+}
 
 struct FileLogger {
     file: Mutex<File>,
@@ -20,7 +36,7 @@ struct FileLogger {
 
 impl FileLogger {
     fn rotate_if_needed(&self, file: &mut File, written: &mut u64) {
-        if *written < MAX_BYTES {
+        if !rotation_due(*written, ROTATE.load(Ordering::Relaxed)) {
             return;
         }
         let old = self.path.with_extension("log.1");
@@ -140,4 +156,18 @@ pub fn init() {
         env!("CARGO_PKG_VERSION"),
         std::process::id()
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_the_owning_instance_rotates() {
+        // A CLI process appending to a full log leaves it for the running instance.
+        assert!(!rotation_due(MAX_BYTES, false));
+        assert!(!rotation_due(u64::MAX, false));
+        assert!(rotation_due(MAX_BYTES, true));
+        assert!(!rotation_due(MAX_BYTES - 1, true));
+    }
 }

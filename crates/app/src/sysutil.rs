@@ -60,19 +60,41 @@ pub fn fatal_box(title: &str, message: &str) {
     }
 }
 
+/// Yes/No question box for a choice that cannot wait for a window (quitting with unsaved
+/// edits). No is the default button. Blocks the calling thread until answered.
+pub fn confirm_box(title: &str, message: &str) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        IDYES, MB_DEFBUTTON2, MB_ICONWARNING, MB_TOPMOST, MB_YESNO,
+    };
+    let t: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
+    let m: Vec<u16> = message.encode_utf16().chain(std::iter::once(0)).collect();
+    // SAFETY: both buffers are NUL-terminated and outlive the call.
+    let answer = unsafe {
+        MessageBoxW(
+            None,
+            PCWSTR(m.as_ptr()),
+            PCWSTR(t.as_ptr()),
+            MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2 | MB_SETFOREGROUND | MB_TOPMOST,
+        )
+    };
+    answer == IDYES
+}
+
 pub fn system_dpi() -> u32 {
     // SAFETY: no arguments.
     let d = unsafe { GetDpiForSystem() };
     if d == 0 { 96 } else { d }
 }
 
-/// Move a file to the Recycle Bin (no UI, no confirmation). Errors if the shell refused or
-/// the file is still there afterwards.
+/// Move a file to the Recycle Bin, without UI when it can go there. Where Windows would
+/// delete it for good instead (network shares, removable drives, a full or disabled bin) it
+/// asks first, and No is an error here. Errors if the shell refused or the file is still
+/// there afterwards.
 pub fn recycle(path: &std::path::Path) -> anyhow::Result<()> {
     use std::os::windows::ffi::OsStrExt;
     use windows::Win32::UI::Shell::{
-        FO_DELETE, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_SILENT, SHFILEOPSTRUCTW,
-        SHFileOperationW,
+        FO_DELETE, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_SILENT,
+        FOF_WANTNUKEWARNING, SHFILEOPSTRUCTW, SHFileOperationW,
     };
     if !path.exists() {
         return Ok(());
@@ -83,7 +105,14 @@ pub fn recycle(path: &std::path::Path) -> anyhow::Result<()> {
     let mut op = SHFILEOPSTRUCTW {
         wFunc: FO_DELETE,
         pFrom: PCWSTR(from.as_ptr()),
-        fFlags: (FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_SILENT).0 as u16,
+        // FOF_WANTNUKEWARNING overrides FOF_NOCONFIRMATION only when the file cannot be
+        // recycled, so a permanent delete is never silent.
+        fFlags: (FOF_ALLOWUNDO
+            | FOF_NOCONFIRMATION
+            | FOF_NOERRORUI
+            | FOF_SILENT
+            | FOF_WANTNUKEWARNING)
+            .0 as u16,
         ..Default::default()
     };
     // SAFETY: `from` is double-NUL terminated and outlives the call; no other pointers set.

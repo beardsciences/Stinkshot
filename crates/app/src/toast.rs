@@ -402,6 +402,8 @@ impl Surface for Toast {
             }
         };
         let is_message = matches!(self.kind, ToastKind::Message { .. });
+        // Toasts never take focus, so a screen reader only hears them through a live region.
+        crate::a11y::live_status(ctx, || format!("{title}. {body}"));
 
         let mut close = expired;
         let mut command: Option<Command> = None;
@@ -438,6 +440,17 @@ impl Surface for Toast {
                     StrokeKind::Inside,
                 );
                 let r = ui.interact(thumb_rect, ui.scope_id().with("thumb"), Sense::click());
+                // Named by what a click does, or as the picture when it does nothing.
+                if item.is_some() && (can_edit || is_recording) {
+                    let name = if can_edit {
+                        tr!("shell.toast.edit")
+                    } else {
+                        tr!("shell.toast.play")
+                    };
+                    crate::a11y::describe(&r, egui::accesskit::Role::Button, name, None);
+                } else {
+                    crate::a11y::describe(&r, egui::accesskit::Role::Image, &title, None);
+                }
                 if r.clicked()
                     && let Some(id) = item
                 {

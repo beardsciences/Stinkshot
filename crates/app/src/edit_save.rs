@@ -5,7 +5,8 @@
 //!
 //! Re-editing a history item (`editing: Some(id)`):
 //! - `Save` (Ctrl+S) writes the edits back to that item: the image file, its re-edit sidecar
-//!   (which keeps the original unannotated base, so the item stays re-editable), the index
+//!   (the picture under the annotations and the annotations that are still editable, so
+//!   the item stays re-editable; see `write_sidecar` for what it never holds), the index
 //!   row (size, bytes, OCR text reset) and the thumbnail (dropped, regenerated on demand).
 //! - `SaveCopy` and `SaveAs` (file dialog) add a new history item and leave the original
 //!   untouched: Save As asks for another file, so it must not replace this one, least of
@@ -159,10 +160,17 @@ pub fn write_to_history(
     })
 }
 
-/// The re-edit sidecar: the unannotated base and the document when Keep Editable Originals
-/// is on and there are annotations. Otherwise, for a framed export (Beautify), the picture
-/// without the frame and no annotations: it holds nothing the export does not show
-/// (redactions are already in it), and a re-edit starts from it instead of framing the frame.
+/// The re-edit sidecar. With Keep Editable Originals on and annotations present: the
+/// capture with every Blur, Pixelate and Redact already applied, plus the document. What
+/// the saved picture hides is not in it: a shape under a redaction (pasted picture,
+/// pointer, text) is stored only as the pixels the picture shows and is no longer
+/// editable, together with everything below that redaction. Annotations that nothing
+/// covers are stored in clear (their text, and pasted pictures in full), and so is the
+/// capture under them: an arrow or a text box over a spot does not hide it from the
+/// sidecar. `annotate::save_editable` does this.
+/// Otherwise, for a framed export (Beautify), the picture without the frame and no
+/// annotations: it holds nothing the export does not show (redactions are already in it),
+/// and a re-edit starts from it instead of framing the frame.
 pub(crate) fn write_sidecar(
     cfg: &Config,
     path: &Path,

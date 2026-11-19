@@ -33,6 +33,17 @@ enum Msg {
 struct Entry {
     action: Action,
     item: MenuItem,
+    /// The action's hotkey as configured, to rebuild the label when recording starts or stops.
+    hotkey: String,
+}
+
+/// Menu label of an action. While a recording runs, both record entries stop it, and say so.
+fn entry_label(action: Action, recording: bool) -> &'static str {
+    if recording && action.is_recording() {
+        tr!("shell.tray.stop_recording")
+    } else {
+        action.label()
+    }
 }
 
 pub struct Tray {
@@ -105,14 +116,19 @@ impl Tray {
                     .context("tray menu")?;
             }
             prev_recording = action.is_recording();
+            let hotkey = action.hotkey(&config.hotkeys).clone();
             let item = MenuItem::with_id(
                 action.id(),
-                entry_text(action.label(), action.hotkey(&config.hotkeys)),
+                entry_text(entry_label(action, false), &hotkey),
                 true,
                 None,
             );
             menu.append(&item).context("tray menu")?;
-            entries.push(Entry { action, item });
+            entries.push(Entry {
+                action,
+                item,
+                hotkey,
+            });
         }
         menu.append(&PredefinedMenuItem::separator())
             .context("tray menu")?;
@@ -201,11 +217,20 @@ impl Tray {
         crate::wake::wake();
     }
 
-    /// Show or clear the red recording dot. Cheap to call every frame.
+    /// Show or clear the red recording dot, and turn the record entries into Stop Recording
+    /// while it shows. Cheap to call every frame.
     pub fn set_recording(&mut self, on: bool) {
         if on != self.recording {
             self.recording = on;
             self.refresh_icon();
+            self.refresh_entries();
+        }
+    }
+
+    fn refresh_entries(&self) {
+        for e in &self.entries {
+            e.item
+                .set_text(entry_text(entry_label(e.action, self.recording), &e.hotkey));
         }
     }
 
@@ -257,12 +282,10 @@ impl Tray {
     /// Refresh hotkey labels (and accent / header) after settings change.
     pub fn update_labels(&mut self, config: &Config) {
         self.header.set_text(header_text(config));
-        for e in &self.entries {
-            e.item.set_text(entry_text(
-                e.action.label(),
-                e.action.hotkey(&config.hotkeys),
-            ));
+        for e in &mut self.entries {
+            e.hotkey = e.action.hotkey(&config.hotkeys).clone();
         }
+        self.refresh_entries();
         let accent = accent_of(config);
         if accent != self.accent {
             self.accent = accent;
@@ -348,6 +371,18 @@ mod tests {
             "Scrolling\tCtrl+Shift+S"
         );
         assert_eq!(entry_text("Window", ""), "Window");
+    }
+
+    #[test]
+    fn record_entries_say_stop_while_recording() {
+        for a in Action::ALL {
+            assert_eq!(entry_label(a, false), a.label());
+            if a.is_recording() {
+                assert_eq!(entry_label(a, true), "Stop Recording");
+            } else {
+                assert_eq!(entry_label(a, true), a.label());
+            }
+        }
     }
 
     #[test]

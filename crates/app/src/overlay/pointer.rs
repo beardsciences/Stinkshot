@@ -2,7 +2,7 @@
 //! creation, selection (click, Shift+click, marquee), moving and resizing with smart
 //! guides, zoom and pan, the eyedropper, and caret placement while typing on the image.
 
-use super::selection::{hit_handle, px_to_f, resize_px_rect};
+use super::selection::{handle_pos, hit_handle, px_to_f, resize_px_rect};
 use super::shapes::ShapeHandle;
 use super::*;
 
@@ -15,6 +15,12 @@ fn dist2(a: (f32, f32), b: (f32, f32)) -> f32 {
 
 fn round_pt(p: (f32, f32)) -> (i32, i32) {
     (p.0.round() as i32, p.1.round() as i32)
+}
+
+/// A gesture is in progress but the button is up and no release was reported: the
+/// button-up went elsewhere (the window lost focus mid-drag).
+fn release_lost(dragging: bool, inp: &Input) -> bool {
+    dragging && !inp.down && !inp.released && !inp.pressed
 }
 
 fn handle_cursor(h: Handle8) -> CursorIcon {
@@ -186,6 +192,19 @@ impl Overlay {
             }
             return;
         }
+
+        // A lost button-up ends the gesture like a release, so nothing stays stuck to the
+        // pointer.
+        let ended;
+        let inp = if release_lost(!matches!(self.drag, Drag::None), inp) {
+            ended = Input {
+                released: true,
+                ..inp.clone()
+            };
+            &ended
+        } else {
+            inp
+        };
 
         if matches!(self.drag, Drag::None) {
             if inp.pressed && self.help_open {
@@ -569,7 +588,7 @@ impl Overlay {
         }
         // Eyedropper: a click picks the color under the cursor.
         if self.picking {
-            let c = self.sample_at(p);
+            let c = self.sample_picture(p);
             self.picking = false;
             self.set_color([c[0], c[1], c[2], 255]);
             self.drag = Drag::Ignore;
@@ -601,6 +620,8 @@ impl Overlay {
                     id,
                     handle: h,
                     pre: self.doc.clone(),
+                    start_screen: screen,
+                    moved: false,
                 };
                 return;
             }
@@ -610,9 +631,12 @@ impl Overlay {
             && self.tool == Tool::Select
             && let Some(h) = hit_handle(px_to_f(sel), p, self.pt_to_canvas(SEL_HANDLE_PT, ppp))
         {
+            let at = handle_pos(px_to_f(sel), h);
             self.drag = Drag::ResizeSel {
                 handle: h,
                 start_sel: sel,
+                grab: (at.0 - p.0, at.1 - p.1),
+                start_crop: self.crop,
             };
             return;
         }
@@ -907,28 +931,30 @@ impl Overlay {
                     self.retie(start_sel, new);
                 }
             }
-            Drag::ResizeSel { handle, start_sel } => {
+            Drag::ResizeSel {
+                handle,
+                start_sel,
+                grab,
+                start_crop,
+            } => {
+                let at = round_pt((p.0 + grab.0, p.1 + grab.1));
                 let aspect = self.effective_aspect(inp.shift);
                 // A region snapped to an element grows at most to its root (the window or
                 // the taskbar) and its edges snap to the element chain (Alt: free).
                 let tol = self.pt_to_canvas(snap::SNAP_PT, ppp).round() as i32;
                 let new = match self.tie_for(start_sel, inp.alt) {
-                    Some(t) => t.resize(
-                        start_sel,
-                        handle,
-                        round_pt(p),
-                        self.sel_bounds(),
-                        aspect,
-                        tol,
-                    ),
-                    None => {
-                        resize_px_rect(start_sel, handle, round_pt(p), self.sel_bounds(), aspect)
-                    }
+                    Some(t) => t.resize(start_sel, handle, at, self.sel_bounds(), aspect, tol),
+                    None => resize_px_rect(start_sel, handle, at, self.sel_bounds(), aspect),
                 };
-                self.set_sel(new);
+                self.set_sel_resized(new, start_sel, start_crop);
                 ctx.set_cursor_icon(handle_cursor(handle));
                 if !inp.released {
-                    self.drag = Drag::ResizeSel { handle, start_sel };
+                    self.drag = Drag::ResizeSel {
+                        handle,
+                        start_sel,
+                        grab,
+                        start_crop,
+                    };
                 } else {
                     self.retie(start_sel, new);
                 }
@@ -1044,6 +1070,10 @@ impl Overlay {
                 }
                 if inp.released {
                     self.guides.clear();
+                    if moved {
+                        // A cover text now sits on other pixels.
+                        self.resample_covers(&ids);
+                    }
                     if self.doc != pre {
                         self.undo.push(&pre);
                     }
@@ -1080,13 +1110,27 @@ impl Overlay {
                     };
                 }
             }
-            Drag::ResizeShape { id, handle, pre } => {
+            Drag::ResizeShape {
+                id,
+                handle,
+                pre,
+                start_screen,
+                mut moved,
+            } => {
                 let mut ip = self.to_image(p);
                 let measure = self.measurer();
                 self.guides.clear();
+                // A press that stays inside the click slop leaves the shape alone.
+                let sp = inp.spos.unwrap_or(start_screen);
+                if !moved && dist2(start_screen, sp) >= CLICK_SLOP_PT * ppp {
+                    moved = true;
+                }
                 // Snap the dragged point (box handles on the axes they move, line ends and
                 // the callout tail on both). Shift's own constraint wins over snapping.
-                if !(inp.alt || inp.shift && matches!(handle, ShapeHandle::P1 | ShapeHandle::P2)) {
+                if moved
+                    && !(inp.alt
+                        || inp.shift && matches!(handle, ShapeHandle::P1 | ShapeHandle::P2))
+                {
                     let (sx, sy) = match handle {
                         ShapeHandle::Rect(h) | ShapeHandle::Src(h) => {
                             (h.h_dir() != 0, h.v_dir() != 0)
@@ -1105,8 +1149,14 @@ impl Overlay {
                         self.guides = g;
                     }
                 }
-                if let Some(s) = self.doc.get_mut(id) {
-                    shapes::drag_handle(s, handle, ip, inp.shift, &measure);
+                // From the shape as it was at the press, so the far edge stays the anchor
+                // even after the pointer crosses it.
+                if moved
+                    && let Some(new) =
+                        shapes::drag_handle_from(&pre, id, handle, ip, inp.shift, &measure)
+                    && let Some(s) = self.doc.get_mut(id)
+                {
+                    *s = new;
                 }
                 ctx.set_cursor_icon(shape_handle_cursor(handle, true));
                 if inp.released {
@@ -1118,12 +1168,21 @@ impl Overlay {
                     {
                         shapes::straighten(&mut s.kind);
                     }
+                    if moved {
+                        self.resample_covers(&[id]);
+                    }
                     if self.doc != pre {
                         self.undo.push(&pre);
                     }
                     self.release_live();
                 } else {
-                    self.drag = Drag::ResizeShape { id, handle, pre };
+                    self.drag = Drag::ResizeShape {
+                        id,
+                        handle,
+                        pre,
+                        start_screen,
+                        moved,
+                    };
                 }
             }
             Drag::Marquee {
@@ -1233,4 +1292,33 @@ fn is_on(r: RectF, at: f32, vertical: bool) -> bool {
         [r.y, r.y + r.h / 2.0, r.y + r.h]
     };
     vals.iter().any(|v| (v - at).abs() < 0.01)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_button_up_that_never_arrived_ends_the_drag() {
+        let held = Input {
+            down: true,
+            ..Input::default()
+        };
+        let up = Input::default();
+        let released = Input {
+            released: true,
+            ..Input::default()
+        };
+        let click = Input {
+            pressed: true,
+            released: true,
+            ..Input::default()
+        };
+        assert!(!release_lost(true, &held));
+        assert!(release_lost(true, &up));
+        // The normal release and a click inside one frame are handled as before.
+        assert!(!release_lost(true, &released));
+        assert!(!release_lost(true, &click));
+        assert!(!release_lost(false, &up));
+    }
 }

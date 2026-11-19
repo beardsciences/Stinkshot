@@ -38,6 +38,17 @@ pub fn zoom_step(zoom: f32, notches: f32) -> f32 {
     (zoom * 1.1_f32.powf(notches)).clamp(ZOOM_MIN, ZOOM_MAX)
 }
 
+/// Shortest on-screen side (px) a pin may be zoomed down to: below this there is nothing
+/// left to see, grab or scroll back up on.
+const MIN_SIDE_PX: f32 = 32.0;
+
+/// Smallest zoom the wheel goes to for this image: its shorter side stays `MIN_SIDE_PX` (an
+/// image already smaller than that stays at 100%).
+pub fn zoom_floor(img: (u32, u32)) -> f32 {
+    let side = img.0.min(img.1).max(1) as f32;
+    (MIN_SIDE_PX / side).clamp(ZOOM_MIN, 1.0)
+}
+
 /// Largest zoom at which the pin window (image plus its frame) still fits a GPU surface of
 /// `max_side` px; a larger window cannot be drawn at all.
 pub fn zoom_cap(img: (u32, u32), max_side: usize) -> f32 {
@@ -420,6 +431,13 @@ impl Pin {
         }
     }
 
+    /// The History folder changed: this pin's item id belongs to the old folder's index.
+    /// The picture stays; the item actions (Edit, Open Editor) go (`follow_settings`
+    /// resizes the toolbar).
+    pub fn forget_item(&mut self) {
+        self.item = None;
+    }
+
     /// Follow the Pins settings and the window's DPI: resize around the image when the
     /// toolbar strip changes, switch the window style when Show Pins in Task View changes.
     fn follow_settings(&mut self, ctx: &egui::Context, shared: &Shared, ppp: f32) {
@@ -595,6 +613,9 @@ impl Surface for Pin {
                 if notches > 0.0 {
                     let cap = zoom_cap(dims, ctx.input(|i| i.max_texture_side));
                     z = z.min(cap.max(self.zoom));
+                } else {
+                    // Never shrink below the floor; a pin already under it stays put.
+                    z = z.max(zoom_floor(dims).min(self.zoom));
                 }
                 if (z - self.zoom).abs() > f32::EPSILON {
                     let old = window_size_px(dims, self.zoom);
@@ -809,6 +830,7 @@ impl Surface for Pin {
                             tr!("shell.pin.close.tip")
                         }
                     };
+                    crate::a11y::describe(&resp, egui::accesskit::Role::Button, tip, None);
                     if resp.on_hover_text(tip).clicked() && !recent_drag {
                         match tool {
                             Tool::Opacity => cycle = true,
@@ -880,6 +902,17 @@ impl Surface for Pin {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn zoom_floor_keeps_the_short_side_usable() {
+        // 400 x 100: the 100 px side may shrink to 32 px.
+        assert!((zoom_floor((400, 100)) - 0.32).abs() < 1e-6);
+        // Large images still stop at the global minimum.
+        assert_eq!(zoom_floor((3840, 2160)), ZOOM_MIN);
+        // Tiny images are not zoomed out at all.
+        assert_eq!(zoom_floor((200, 20)), 1.0);
+        assert_eq!(zoom_floor((0, 0)), 1.0);
+    }
 
     #[test]
     fn zoom_is_clamped_and_multiplicative() {

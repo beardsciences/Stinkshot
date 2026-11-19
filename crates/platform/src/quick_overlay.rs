@@ -25,9 +25,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CREATESTRUCTW, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GWLP_USERDATA,
     GetMessageW, GetWindowLongPtrW, IDC_CROSS, LoadCursorW, MSG, PostMessageW, PostQuitMessage,
     RegisterClassW, SW_SHOW, SetWindowDisplayAffinity, SetWindowLongPtrW, ShowWindow,
-    TranslateMessage, WDA_EXCLUDEFROMCAPTURE, WM_CLOSE, WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN,
-    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCCREATE, WM_PAINT, WNDCLASSW, WS_EX_TOOLWINDOW,
-    WS_EX_TOPMOST, WS_POPUP,
+    TranslateMessage, WDA_EXCLUDEFROMCAPTURE, WM_CAPTURECHANGED, WM_CLOSE, WM_DESTROY,
+    WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCCREATE, WM_PAINT,
+    WNDCLASSW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 use windows::core::PCWSTR;
 
@@ -292,8 +292,10 @@ fn run(
                 let _ = ShowWindow(hwnd, SW_SHOW);
                 // Paint now, before reporting the window as shown.
                 let _ = windows::Win32::Graphics::Gdi::UpdateWindow(hwnd);
-                crate::window_util::force_foreground(hwnd.0 as Hwnd);
+                // Report first: taking the foreground can wait on another app, and the
+                // picture is already up.
                 let _ = ready.send(Ok(hwnd.0 as Hwnd));
+                crate::window_util::force_foreground(hwnd.0 as Hwnd);
                 let mut msg = MSG::default();
                 while GetMessageW(&mut msg, None, 0, 0).as_bool() {
                     let _ = TranslateMessage(&msg);
@@ -310,6 +312,39 @@ fn run(
         let _ = DeleteDC(clear_dc);
         let _ = DeleteObject(HGDIOBJ(bitmaps.dim.0));
         let _ = DeleteObject(HGDIOBJ(bitmaps.clear.0));
+    }
+}
+
+/// The left button went up at `up`. Ignored unless this window saw it go down: a button
+/// pressed before the window was shown (in the app underneath) is not a click here.
+fn button_up(i: &mut QuickInput, up: PxPoint) {
+    i.cursor = Some(up);
+    if !i.down {
+        return;
+    }
+    i.down = false;
+    // A click (no drag) takes the highlighted window once the overlay is up.
+    let moved = i
+        .press
+        .is_some_and(|p| (p.x - up.x).abs().max((p.y - up.y).abs()) >= CLICK_SLOP);
+    if moved {
+        i.release = Some(up);
+    } else {
+        i.press = None;
+        i.clicked = Some(up);
+    }
+}
+
+/// The mouse capture went elsewhere, so the button-up may never arrive here. While the
+/// button is still held the press stays down: the real overlay takes the foreground (and
+/// with it the capture) during the handover and continues that drag. Once it is no longer
+/// held, the press ends at the last pointer position seen.
+fn capture_lost(i: &mut QuickInput, button_held: bool) {
+    if i.down
+        && !button_held
+        && let Some(at) = i.cursor.or(i.press)
+    {
+        button_up(i, at);
     }
 }
 
@@ -472,24 +507,25 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             }
             WM_LBUTTONUP => {
                 let (x, y) = point_of(lparam);
-                let _ = ReleaseCapture();
                 if let Ok(mut i) = st.input.lock() {
-                    i.cursor = Some(to_virtual(x, y));
-                    i.down = false;
-                    let up = to_virtual(x, y);
-                    // A click (no drag) takes the highlighted window once the overlay is up.
-                    let moved = i
-                        .press
-                        .is_some_and(|p| (p.x - up.x).abs().max((p.y - up.y).abs()) >= CLICK_SLOP);
-                    if moved {
-                        i.release = Some(up);
-                    } else {
-                        i.press = None;
-                        i.clicked = Some(up);
-                    }
+                    button_up(&mut i, to_virtual(x, y));
                 }
+                // After the state update: this sends WM_CAPTURECHANGED to this window.
+                let _ = ReleaseCapture();
                 let c = clear_rect(st, x, y);
                 set_clear(hwnd, st, c);
+                LRESULT(0)
+            }
+            WM_CAPTURECHANGED => {
+                let held = crate::input::primary_button_down();
+                let at = st.input.lock().ok().and_then(|mut i| {
+                    capture_lost(&mut i, held);
+                    i.cursor
+                });
+                if let Some(p) = at {
+                    let c = clear_rect(st, p.x - st.bounds.x, p.y - st.bounds.y);
+                    set_clear(hwnd, st, c);
+                }
                 LRESULT(0)
             }
             WM_KEYDOWN if wparam.0 == VK_ESCAPE.0 as usize => {
@@ -530,5 +566,71 @@ mod tests {
         assert_eq!(&c[4..8], &[0, 40, 255, 0]);
         // 255 * (255 - 148) / 255 = 107.
         assert_eq!(&d[..4], &[0, 0, 107, 0]);
+    }
+
+    fn pt(x: i32, y: i32) -> PxPoint {
+        PxPoint { x, y }
+    }
+
+    fn pressed(at: PxPoint) -> QuickInput {
+        QuickInput {
+            press: Some(at),
+            cursor: Some(at),
+            down: true,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn button_up_without_a_press_is_not_a_click() {
+        let mut i = QuickInput::default();
+        button_up(&mut i, pt(50, 60));
+        assert_eq!(i.clicked, None);
+        assert_eq!(i.release, None);
+        assert_eq!(i.press, None);
+        assert_eq!(i.cursor, Some(pt(50, 60)));
+        // A second up after a finished click changes nothing either.
+        let mut i = pressed(pt(1, 1));
+        button_up(&mut i, pt(2, 2));
+        button_up(&mut i, pt(90, 90));
+        assert_eq!(i.clicked, Some(pt(2, 2)));
+        assert_eq!(i.release, None);
+    }
+
+    #[test]
+    fn button_up_after_a_press_is_a_click_or_a_drag() {
+        let mut i = pressed(pt(10, 10));
+        button_up(&mut i, pt(11, 12));
+        assert!(!i.down);
+        assert_eq!(
+            (i.clicked, i.press, i.release),
+            (Some(pt(11, 12)), None, None)
+        );
+
+        let mut i = pressed(pt(10, 10));
+        button_up(&mut i, pt(40, 10));
+        assert!(!i.down);
+        assert_eq!(
+            (i.clicked, i.press, i.release),
+            (None, Some(pt(10, 10)), Some(pt(40, 10)))
+        );
+    }
+
+    #[test]
+    fn capture_lost_keeps_a_held_press_and_ends_a_released_one() {
+        // Still held (the handover to the real overlay): the drag stays in progress.
+        let mut i = pressed(pt(10, 10));
+        i.cursor = Some(pt(80, 90));
+        capture_lost(&mut i, true);
+        assert!(i.down);
+        assert_eq!((i.press, i.release), (Some(pt(10, 10)), None));
+        // Released somewhere this window did not see: ends at the last position.
+        capture_lost(&mut i, false);
+        assert!(!i.down);
+        assert_eq!(i.release, Some(pt(80, 90)));
+        // Nothing pressed: nothing to end.
+        let mut i = QuickInput::default();
+        capture_lost(&mut i, false);
+        assert_eq!(i, QuickInput::default());
     }
 }

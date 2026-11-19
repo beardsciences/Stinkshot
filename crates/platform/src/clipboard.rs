@@ -18,17 +18,29 @@ use crate::util::{wide, wide_os};
 
 struct ClipboardGuard;
 
+/// Tries at opening the clipboard. The waits between them (`open_retry_delay`) add up to
+/// about 0.45 s, so a caller is held for half a second at most.
+const OPEN_ATTEMPTS: u64 = 14;
+
+/// The wait after failed try number `attempt` (from 0): 10 ms, growing by 4 ms.
+fn open_retry_delay(attempt: u64) -> std::time::Duration {
+    std::time::Duration::from_millis(10 + attempt * 4)
+}
+
 impl ClipboardGuard {
     /// Open with retries: another process (clipboard managers, remote desktop) may hold it.
     fn open() -> anyhow::Result<ClipboardGuard> {
         let mut last = None;
-        for attempt in 0..25 {
+        for attempt in 0..OPEN_ATTEMPTS {
             // SAFETY: a null owner window associates the clipboard with the current task.
             match unsafe { OpenClipboard(None) } {
                 Ok(()) => return Ok(ClipboardGuard),
                 Err(e) => {
                     last = Some(e);
-                    std::thread::sleep(std::time::Duration::from_millis(10 + attempt * 4));
+                    // No wait after the last try: nothing follows it.
+                    if attempt + 1 < OPEN_ATTEMPTS {
+                        std::thread::sleep(open_retry_delay(attempt));
+                    }
                 }
             }
         }
@@ -82,11 +94,6 @@ impl Drop for Block {
         // SAFETY: the block was never given to the clipboard.
         let _ = unsafe { GlobalFree(Some(self.0)) };
     }
-}
-
-/// Place `bytes` on the (already open) clipboard under `format`.
-fn put(format: u32, bytes: &[u8]) -> anyhow::Result<()> {
-    Block::new(bytes)?.set(format)
 }
 
 fn png_format() -> u32 {
@@ -229,21 +236,40 @@ fn set_all(blocks: Vec<(u32, Block)>) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn set_image(img: &Rgba) -> anyhow::Result<()> {
-    let blocks = blocks(image_payloads(img)?)?;
+/// The format that tells Windows not to sync a copy to the user's other devices through
+/// Cloud Clipboard: a DWORD 0 under "CanUploadToCloudClipboard". Captures and copied text
+/// stay on this PC. Local clipboard history (Win+V) is a separate format and is left alone.
+fn no_cloud_upload() -> (u32, Vec<u8>) {
+    (
+        name_format("CanUploadToCloudClipboard"),
+        0u32.to_le_bytes().to_vec(),
+    )
+}
+
+/// Replace the clipboard contents with `payloads`, marked as not for Cloud Clipboard.
+/// Every write goes through here so none can miss the marker.
+fn replace_contents(mut payloads: Vec<(u32, Vec<u8>)>) -> anyhow::Result<()> {
+    payloads.push(no_cloud_upload());
+    let blocks = blocks(payloads)?;
     let _g = ClipboardGuard::open()?;
     // SAFETY: clipboard is open on this thread.
     unsafe { EmptyClipboard() }?;
-    set_all(blocks)
+    set_all(blocks).inspect_err(|_| {
+        // The marker goes on last, so a partial write may lack it: leave nothing behind
+        // that could sync.
+        // SAFETY: clipboard is still open on this thread.
+        let _ = unsafe { EmptyClipboard() };
+    })
+}
+
+pub fn set_image(img: &Rgba) -> anyhow::Result<()> {
+    replace_contents(image_payloads(img)?)
 }
 
 pub fn set_text(text: &str) -> anyhow::Result<()> {
-    let _g = ClipboardGuard::open()?;
-    // SAFETY: clipboard is open on this thread.
-    unsafe { EmptyClipboard() }?;
     let w = wide(text);
     let bytes: Vec<u8> = w.iter().flat_map(|c| c.to_le_bytes()).collect();
-    put(CF_UNICODETEXT.0 as u32, &bytes)
+    replace_contents(vec![(CF_UNICODETEXT.0 as u32, bytes)])
 }
 
 /// DROPFILES payload for CF_HDROP (wide paths, double-NUL terminated).
@@ -275,11 +301,7 @@ pub fn set_file_and_image(path: &std::path::Path, img: Option<&Rgba>) -> anyhow:
     if let Some(img) = img {
         all.extend(image_payloads(img)?);
     }
-    let blocks = blocks(all)?;
-    let _g = ClipboardGuard::open()?;
-    // SAFETY: clipboard is open on this thread.
-    unsafe { EmptyClipboard() }?;
-    set_all(blocks)
+    replace_contents(all)
 }
 
 fn read_global(format: u32) -> Option<Vec<u8>> {
@@ -458,6 +480,24 @@ mod tests {
         let img = Rgba::filled(1, 1, [0, 0, 0, 0]);
         let d = build_dib(&img);
         assert_eq!(&d[40..44], &[255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn open_retries_stay_within_half_a_second() {
+        // One wait fewer than tries: none follows the last one.
+        let total: std::time::Duration = (0..OPEN_ATTEMPTS - 1).map(open_retry_delay).sum();
+        assert!(total <= std::time::Duration::from_millis(500), "{total:?}");
+        assert!(total >= std::time::Duration::from_millis(400), "{total:?}");
+    }
+
+    #[test]
+    fn cloud_marker_is_a_zero_dword_under_a_registered_format() {
+        let (format, bytes) = no_cloud_upload();
+        assert_eq!(bytes, [0u8; 4]);
+        // Registered formats live in 0xC000..=0xFFFF; the name always maps to the same id.
+        assert!((0xC000..=0xFFFF).contains(&format), "{format:#x}");
+        assert_eq!(format, no_cloud_upload().0);
+        assert_ne!(format, png_format());
     }
 
     #[test]

@@ -383,18 +383,26 @@ impl Config {
     /// Load from `path()`; missing file -> defaults (and writes them). A setting with a
     /// value that cannot be used -> only that setting goes back to its default, and the
     /// file as it was is kept as config.toml.bad-<timestamp>. A file that is not TOML at
-    /// all -> backed up the same way, log, return defaults.
+    /// all -> backed up the same way, log, return defaults. A file that is there but
+    /// cannot be read (locked, no access) -> defaults for this run, the file untouched,
+    /// and the first `save` keeps a copy of it before writing.
     pub fn load() -> Config {
-        let path = Self::path();
+        let (cfg, unread) = Self::load_or_repair(&Self::path());
+        UNREAD.store(unread, std::sync::atomic::Ordering::Relaxed);
+        cfg
+    }
+    /// `load` for `path`. The flag is set when the file is still there as it was and no
+    /// copy of it was kept: it could not be read, or could not be backed up.
+    fn load_or_repair(path: &Path) -> (Config, bool) {
         if !path.exists() {
             let cfg = Config::default();
-            if let Err(e) = cfg.save_to(&path) {
+            if let Err(e) = cfg.save_to(path) {
                 log::warn!(
                     "could not write default config to {}: {e:#}",
                     path.display()
                 );
             }
-            return cfg;
+            return (cfg, false);
         }
         let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
         let mut backup_name = path
@@ -403,39 +411,50 @@ impl Config {
             .unwrap_or_default();
         backup_name.push(format!(".bad-{stamp}"));
         let backup = path.with_file_name(backup_name);
-        match Self::load_from(&path) {
-            Ok(cfg) => cfg,
+        match Self::load_from(path) {
+            Ok(cfg) => (cfg, false),
+            Err(e) if read_failed(&e) => {
+                // Not a bad file: one this run could not get at. Leave it exactly as it is.
+                log::error!(
+                    "config {} could not be read: {e:#}; using defaults for this run",
+                    path.display()
+                );
+                (Config::default(), true)
+            }
             Err(e) => {
-                if let Some((cfg, dropped)) = Self::salvage(&path) {
+                if let Some((cfg, dropped)) = Self::salvage(path) {
                     log::error!(
                         "config {}: {e:#}; reset to default: {}",
                         path.display(),
                         dropped.join(", ")
                     );
-                    match std::fs::copy(&path, &backup) {
+                    return match std::fs::copy(path, &backup) {
                         Ok(_) => {
                             log::warn!("kept the config as it was in {}", backup.display());
-                            if let Err(e) = cfg.save_to(&path) {
+                            if let Err(e) = cfg.save_to(path) {
                                 log::warn!("could not write repaired config: {e:#}");
                             }
+                            (cfg, false)
                         }
-                        Err(e) => log::warn!("could not back up config: {e}"),
-                    }
-                    return cfg;
+                        Err(e) => {
+                            log::warn!("could not back up config: {e}");
+                            (cfg, true)
+                        }
+                    };
                 }
                 log::error!("config {} is unreadable: {e:#}", path.display());
-                match std::fs::rename(&path, &backup) {
+                match std::fs::rename(path, &backup) {
                     Ok(()) => {
                         log::warn!("backed up malformed config to {}", backup.display());
                         let cfg = Config::default();
-                        if let Err(e) = cfg.save_to(&path) {
+                        if let Err(e) = cfg.save_to(path) {
                             log::warn!("could not write fresh config: {e:#}");
                         }
-                        cfg
+                        (cfg, false)
                     }
                     Err(e) => {
                         log::warn!("could not back up malformed config: {e}");
-                        Config::default()
+                        (Config::default(), true)
                     }
                 }
             }
@@ -530,9 +549,15 @@ impl Config {
             self.history.max_gb = 0.0;
         }
     }
-    /// Atomic write (temp + rename).
+    /// Atomic write (temp + rename). After a `load` that had to leave the file as it was
+    /// (see `UNREAD`), the first save keeps a copy of it and fails when it cannot.
     pub fn save(&self) -> anyhow::Result<()> {
-        self.save_to(&Self::path())
+        let path = Self::path();
+        if UNREAD.load(std::sync::atomic::Ordering::Relaxed) {
+            keep_unread_copy(&path)?;
+            UNREAD.store(false, std::sync::atomic::Ordering::Relaxed);
+        }
+        self.save_to(&path)
     }
     pub fn save_to(&self, path: &Path) -> anyhow::Result<()> {
         let text = toml::to_string_pretty(self).context("serializing config")?;
@@ -553,6 +578,38 @@ impl Config {
         home.join("Pictures")
             .join(format!("Stinkshot{}", profile_suffix()))
     }
+}
+
+/// `load` returned settings that did not come from the config file while the file is still
+/// on disk with no backup. Saving them would replace the user's real settings, so `save`
+/// copies the file aside first.
+static UNREAD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The file could not be read at all (locked, no access, a drive that is away), as opposed
+/// to read and found unusable. Bytes that are not text count as unusable content.
+fn read_failed(e: &anyhow::Error) -> bool {
+    e.chain()
+        .filter_map(|c| c.downcast_ref::<std::io::Error>())
+        .any(|io| io.kind() != std::io::ErrorKind::InvalidData)
+}
+
+/// Copy the config as it is to `config.toml.unread-<timestamp>`. Nothing to do when the
+/// file is gone.
+fn keep_unread_copy(path: &Path) -> anyhow::Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    let mut name = path
+        .file_name()
+        .map(|n| n.to_os_string())
+        .unwrap_or_default();
+    name.push(format!(".unread-{stamp}"));
+    let backup = path.with_file_name(name);
+    std::fs::copy(path, &backup)
+        .with_context(|| format!("keeping a copy of {} before saving", path.display()))?;
+    log::warn!("kept the unread config in {}", backup.display());
+    Ok(())
 }
 
 /// Expand `%NAME%` references; unknown variables are left as written.
@@ -863,6 +920,7 @@ after_region = \"window\"
             "[capture]
 jpeg_quality = \"high\"
 window_padding_px = 7
+last_region = { x = -1920, y = 10, w = 800, h = 600 }
              [history]
 keep_days = 30
 max_gb = \"lots\"
@@ -873,6 +931,11 @@ max_gb = \"lots\"
         let (cfg, dropped) = Config::salvage(&p).unwrap();
         assert_eq!(dropped, ["capture.jpeg_quality", "history.max_gb"]);
         assert_eq!(cfg.capture.window_padding_px, 7);
+        // A table-valued setting next to the bad one is kept whole.
+        assert_eq!(
+            cfg.capture.last_region,
+            Some(crate::geom::PxRect::new(-1920, 10, 800, 600))
+        );
         assert_eq!(cfg.history.keep_days, 30);
         assert_eq!(
             cfg.capture.jpeg_quality,
@@ -882,6 +945,40 @@ max_gb = \"lots\"
         // Not TOML at all: nothing to save.
         std::fs::write(&p, "this is [not toml").unwrap();
         assert!(Config::salvage(&p).is_none());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_config_that_cannot_be_read_is_not_replaced() {
+        let d = tmp("unread");
+        // Something that exists under the name but cannot be read as a file.
+        let p = d.join("config.toml");
+        std::fs::create_dir_all(&p).unwrap();
+        let (cfg, unread) = Config::load_or_repair(&p);
+        assert!(unread);
+        assert_eq!(cfg, Config::default());
+        assert!(p.is_dir(), "left as it was");
+        assert_eq!(std::fs::read_dir(&d).unwrap().count(), 1, "no .bad copy");
+        // A readable file with bad content is still repaired as before.
+        let q = d.join("other.toml");
+        std::fs::write(&q, "this is [not toml").unwrap();
+        let (_, unread) = Config::load_or_repair(&q);
+        assert!(!unread);
+        assert_eq!(Config::load_from(&q).unwrap(), Config::default());
+        // The copy `save` keeps before its first write over an unread file.
+        std::fs::write(&q, "the real settings").unwrap();
+        keep_unread_copy(&q).unwrap();
+        let kept: Vec<_> = std::fs::read_dir(&d)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().contains(".unread-"))
+            .collect();
+        assert_eq!(kept.len(), 1);
+        assert_eq!(
+            std::fs::read_to_string(kept[0].path()).unwrap(),
+            "the real settings"
+        );
+        keep_unread_copy(&d.join("absent.toml")).unwrap();
         let _ = std::fs::remove_dir_all(&d);
     }
 

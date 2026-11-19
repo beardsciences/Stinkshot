@@ -179,6 +179,11 @@ enum Drag {
     ResizeSel {
         handle: Handle8,
         start_sel: PxRect,
+        /// Handle position minus the press point (canvas px): the edge stays under the
+        /// spot it was grabbed at, so a click does not move it.
+        grab: (f32, f32),
+        /// Annotate mode: the crop at press (image px); edges not dragged keep its values.
+        start_crop: PxRect,
     },
     Draw {
         tool: Tool,
@@ -203,6 +208,9 @@ enum Drag {
         id: ShapeId,
         handle: ShapeHandle,
         pre: Doc,
+        start_screen: (f32, f32),
+        /// The pointer left the click slop: until then the shape is untouched.
+        moved: bool,
     },
     /// Rubber-band selection with the Select tool (image px).
     Marquee {
@@ -237,7 +245,7 @@ struct Finishing {
 }
 
 /// Per-frame input snapshot. `pos` is canvas px, `spos` screen px.
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct Input {
     pos: Option<(f32, f32)>,
     spos: Option<(f32, f32)>,
@@ -295,6 +303,31 @@ struct Keys {
     arrows: (i32, i32),
     shift: bool,
     ctrl: bool,
+}
+
+impl Keys {
+    /// Esc alone, for a frame whose other keys belong to a focused egui field.
+    fn only_esc(&self) -> Keys {
+        Keys {
+            esc: self.esc,
+            ..Keys::default()
+        }
+    }
+
+    /// The shortcuts that work while typing a text (`keys::FINISH_WHILE_TYPING`), without
+    /// the keys the text took.
+    fn only_finish(&self) -> Keys {
+        Keys {
+            save: self.save,
+            save_shift: self.save_shift,
+            pin: self.pin,
+            text: self.text,
+            smart: self.smart,
+            shift: self.shift,
+            ctrl: self.ctrl,
+            ..Keys::default()
+        }
+    }
 }
 
 pub struct Overlay {
@@ -481,6 +514,16 @@ pub struct Overlay {
     clean_doc: Option<Doc>,
     /// Settings > Capture > After Selecting a Region.
     after_region: stinkshot_core::config::AfterRegion,
+    /// Pictures added while a save was in progress; placed once it is done.
+    pending_pictures: Vec<Rgba>,
+    /// The selection, document and undo generation left by the last arrow-key nudge: a
+    /// nudge that starts from exactly that state joins its undo entry.
+    nudge_run: Option<(Vec<ShapeId>, Doc, u64)>,
+    /// `content_image` cache: the base it was made from, the picture shapes drawn on it,
+    /// and the result.
+    content: Option<(Arc<Rgba>, Vec<Shape>, Arc<Rgba>)>,
+    /// Textures of the pointer and pasted pictures painted live; freed with the editor.
+    image_tex: paint::ImageTextures,
 }
 
 /// A short message in the hint bar's leading slot.
@@ -548,12 +591,50 @@ fn esc_needs_confirm(edited: bool, armed_at: Option<Instant>, now: Instant) -> b
     edited && armed_at.is_none_or(|t| now.saturating_duration_since(t) >= DISCARD_WINDOW)
 }
 
+/// Annotate mode: the crop (image px) for the canvas rect `new` of a handle drag that
+/// began at `start_sel` showing `start_crop`. Edges still where they started keep the
+/// start crop's values exactly; the others are converted (`origin` and `scale` place the
+/// `size` image on the canvas).
+fn crop_for_resize(
+    new: PxRect,
+    start_sel: PxRect,
+    start_crop: PxRect,
+    origin: (f32, f32),
+    scale: f32,
+    size: (i32, i32),
+) -> PxRect {
+    let edge = |v: i32, start: i32, kept: i32, o: f32| {
+        if v == start {
+            kept
+        } else {
+            ((v as f32 - o) / scale).round() as i32
+        }
+    };
+    let (w, h) = (size.0.max(1), size.1.max(1));
+    let x0 = edge(new.x, start_sel.x, start_crop.x, origin.0).clamp(0, w - 1);
+    let y0 = edge(new.y, start_sel.y, start_crop.y, origin.1).clamp(0, h - 1);
+    let x1 = edge(new.right(), start_sel.right(), start_crop.right(), origin.0).clamp(x0 + 1, w);
+    let y1 = edge(
+        new.bottom(),
+        start_sel.bottom(),
+        start_crop.bottom(),
+        origin.1,
+    )
+    .clamp(y0 + 1, h);
+    PxRect::new(x0, y0, x1 - x0, y1 - y0)
+}
+
 /// Push `c` to the front of the recent colors (no duplicates, at most `RECENT_COLORS`).
 fn push_recent(recent: &mut Vec<[u8; 4]>, c: [u8; 4]) {
     let c = [c[0], c[1], c[2], 255];
     recent.retain(|r| r[..3] != c[..3]);
     recent.insert(0, c);
     recent.truncate(RECENT_COLORS);
+}
+
+/// A pasted picture (part of what the image shows, unlike the other annotations).
+fn is_picture(s: &Shape) -> bool {
+    matches!(s.kind, ShapeKind::Image { .. })
 }
 
 /// Default color and width for a tool without a remembered style: redaction boxes start
@@ -578,6 +659,14 @@ fn load_tool_styles(cfg: &stinkshot_core::config::Editor) -> HashMap<Tool, ([u8;
 
 impl Overlay {
     pub fn new(req: OverlayRequest, shared: &Shared) -> Self {
+        Self::with_config(req, &shared.config, shared.fonts.clone())
+    }
+
+    fn with_config(
+        req: OverlayRequest,
+        config: &stinkshot_core::config::Config,
+        fonts: Arc<Fonts>,
+    ) -> Self {
         let OverlayRequest {
             mode,
             frozen,
@@ -587,7 +676,7 @@ impl Overlay {
             from_tray_click,
         } = req;
         let bounds = frozen.bounds;
-        let cfg = &shared.config.editor;
+        let cfg = &config.editor;
         let color = parse_hex_color(&cfg.color).unwrap_or([0xff, 0x8a, 0x3d, 0xff]);
         let palette: Vec<[u8; 4]> = cfg
             .palette
@@ -613,7 +702,7 @@ impl Overlay {
             .map(|m| (m.rect.translate(-bounds.x, -bounds.y), m.scale))
             .collect();
         let cursor_local = (frozen.cursor.x - bounds.x, frozen.cursor.y - bounds.y);
-        let cursor_obj = cursor::CursorObj::new(&frozen, shared.config.capture.cursor_object);
+        let cursor_obj = cursor::CursorObj::new(&frozen, config.capture.cursor_object);
 
         let mut o = Overlay {
             kind: Kind::Capture,
@@ -626,7 +715,7 @@ impl Overlay {
                 layers
             },
             windows,
-            fonts: shared.fonts.clone(),
+            fonts,
             monitors: monitors_local,
             create_scale: mon_list
                 .iter()
@@ -653,7 +742,7 @@ impl Overlay {
             hover: None,
             hover_chain: Vec::new(),
             snap_ties: Vec::new(),
-            snap_edges: shared.config.capture.snap_to_elements,
+            snap_edges: config.capture.snap_to_elements,
             snap_level: 0,
             snap_sig: None,
             snap_req: None,
@@ -736,11 +825,15 @@ impl Overlay {
             fixed_rect: None,
             carried_edits: false,
             clean_doc: None,
-            after_region: shared.config.capture.after_region,
+            after_region: config.capture.after_region,
+            pending_pictures: Vec::new(),
+            nudge_run: None,
+            content: None,
+            image_tex: paint::ImageTextures::default(),
         };
 
         // Element snapping picks regions on the screen; the editor never does.
-        if shared.config.capture.snap_to_elements && !matches!(mode, OverlayMode::Annotate { .. }) {
+        if config.capture.snap_to_elements && !matches!(mode, OverlayMode::Annotate { .. }) {
             match ElementSnapper::new() {
                 Ok(s) => o.snapper = Some(s),
                 Err(e) => log::warn!("overlay: element snapping unavailable: {e:#}"),
@@ -953,12 +1046,22 @@ impl Overlay {
             && self.sel.is_some()
     }
 
+    /// A canvas that can take another picture. Not while it is being saved (it closes
+    /// when that is done): Add to Canvas then starts a new canvas instead.
     pub(crate) fn is_canvas(&self) -> bool {
         matches!(self.annotate_meta, Some(("canvas", ..)))
+            && self.finishing.is_none()
+            && !self.closed
     }
 
     pub(crate) fn add_picture(&mut self, img: Rgba) {
-        self.paste_image(img);
+        // A save in progress has its own copy of the document: the picture waits for it
+        // (`frame` places it) instead of landing in a state the save may replace.
+        if self.finishing.is_some() {
+            self.pending_pictures.push(img);
+        } else {
+            self.paste_image(img);
+        }
     }
 
     fn annotating(&self) -> bool {
@@ -1110,6 +1213,27 @@ impl Overlay {
         self.sel = Some(new);
     }
 
+    /// The selection after a handle drag that began at `start_sel` showing `start_crop`.
+    /// In Annotate mode only the edges that moved are converted to image px: at a display
+    /// scale below 1 a round trip through canvas px would shift the others.
+    fn set_sel_resized(&mut self, new: PxRect, start_sel: PxRect, start_crop: PxRect) {
+        match (&self.orig, self.kind) {
+            (Some(o), Kind::Annotate) => {
+                let size = (o.width as i32, o.height as i32);
+                let crop = crop_for_resize(
+                    new,
+                    start_sel,
+                    start_crop,
+                    self.img_origin,
+                    self.scale,
+                    size,
+                );
+                self.set_crop(crop);
+            }
+            _ => self.set_sel(new),
+        }
+    }
+
     /// Annotate mode: set the crop (image px, inside the image) and place the selection on
     /// it. Annotations keep their place on the picture.
     fn set_crop(&mut self, crop: PxRect) {
@@ -1180,9 +1304,67 @@ impl Overlay {
         b
     }
 
+    fn has_pictures(&self) -> bool {
+        self.doc.shapes.iter().any(is_picture)
+    }
+
+    /// What the picture shows before annotations: the base with the pasted pictures drawn
+    /// on it (a canvas is a blank base plus pictures). Text reading, code scanning, color
+    /// sampling and edge snapping look at this. The same `Arc` comes back until the base
+    /// or a picture changes.
+    fn content_image(&mut self) -> Arc<Rgba> {
+        let base = self.ensure_base();
+        if !self.has_pictures() {
+            self.content = None;
+            return base;
+        }
+        if let Some(img) = self.content_cached() {
+            return img.clone();
+        }
+        let mut doc = self.doc.clone();
+        doc.shapes.retain(is_picture);
+        doc.base_width = base.width;
+        doc.base_height = base.height;
+        let img = match render::flatten(&base, &doc, &self.fonts) {
+            Some(img) => Arc::new(img),
+            None => base.clone(),
+        };
+        self.content = Some((base, doc.shapes, img.clone()));
+        img
+    }
+
+    /// The `content_image` made last, while it still matches the base and the pictures.
+    fn content_cached(&self) -> Option<&Arc<Rgba>> {
+        let (base, pictures, img) = self.content.as_ref()?;
+        let fresh = self.base.as_ref().is_some_and(|b| Arc::ptr_eq(b, base))
+            && self
+                .doc
+                .shapes
+                .iter()
+                .filter(|s| is_picture(s))
+                .eq(pictures.iter());
+        fresh.then_some(img)
+    }
+
+    /// `sample_at` with the pasted pictures counted in.
+    fn sample_picture(&mut self, p: (f32, f32)) -> [u8; 3] {
+        if self.annotating() && self.sel.is_some() && self.has_pictures() {
+            self.content_image();
+        }
+        self.sample_at(p)
+    }
+
     /// Color under canvas point `p` for the eyedropper and the loupe: the captured image
-    /// (in the editor the picture itself, elsewhere the frozen screen).
+    /// (in the editor the picture itself, elsewhere the frozen screen), or a pasted
+    /// picture over it once `content_image` has been made for the current pictures.
     fn sample_at(&self, p: (f32, f32)) -> [u8; 3] {
+        if let Some(img) = self.content_cached() {
+            let ip = self.to_image(p);
+            let (x, y) = (ip.x.floor() as i32, ip.y.floor() as i32);
+            if x >= 0 && y >= 0 && x < img.width as i32 && y < img.height as i32 {
+                return paint::sample(img, x, y);
+            }
+        }
         if let (Kind::Annotate, Some(orig)) = (self.kind, &self.orig) {
             let ix = ((p.0 - self.img_origin.0) / self.scale).floor() as i32;
             let iy = ((p.1 - self.img_origin.1) / self.scale).floor() as i32;
@@ -1494,7 +1676,8 @@ impl Overlay {
                 self.set_view(view::actual_size(self.view, anchor, self.scale));
             }
         }
-        if self.annotating() && self.sel.is_some() {
+        // Not in the middle of a pointer gesture: its undo snapshot was taken at the press.
+        if self.annotating() && self.sel.is_some() && self.edit_keys_allowed() {
             if k.save {
                 let action = crate::edit_save::save_shortcut(self.editing_item(), k.save_shift);
                 self.finish(ctx, shared, action);
@@ -1563,19 +1746,12 @@ impl Overlay {
             let (dx, dy) = k.arrows;
             let step = if k.shift { 10 } else { 1 };
             if self.annotating() && !self.selected.is_empty() && !self.cursor_auto_selected() {
-                let pre = self.doc.clone();
                 // One screen px per press, whatever the zoom.
                 let k_img = 1.0 / (self.scale * self.view.zoom).max(0.01);
-                let (ix, iy) = (
+                self.nudge_selected(
                     dx as f32 * step as f32 * k_img,
                     dy as f32 * step as f32 * k_img,
                 );
-                for id in self.selected.clone() {
-                    if let Some(s) = self.doc.get_mut(id) {
-                        shapes::translate(&mut s.kind, ix, iy);
-                    }
-                }
-                self.undo.push(&pre);
             } else if self.sel_editable() {
                 // The region: Arrows move it, Shift+Arrows resize it, Ctrl takes 10 px steps.
                 let s = if k.ctrl { 10 } else { 1 };
@@ -1615,10 +1791,44 @@ impl Overlay {
             if matches!(self.kind, Kind::Select(_)) {
                 self.set_sel(selection::clamp_rect(start, self.local_bounds()));
             } else {
-                self.accept_region(start, shared);
+                self.accept_region_from(start, shared, true);
             }
         }
         let _ = inp;
+    }
+
+    /// Edit shortcuts (undo, delete, duplicate, colors, tools, save...) wait while a
+    /// pointer gesture is in progress.
+    fn edit_keys_allowed(&self) -> bool {
+        matches!(self.drag, Drag::None | Drag::Ignore)
+    }
+
+    /// Arrow keys: move the selected shapes by (`dx`, `dy`) image px. Consecutive nudges
+    /// of the same selection share one undo entry.
+    fn nudge_selected(&mut self, dx: f32, dy: f32) {
+        let pre = self.doc.clone();
+        for id in self.selected.clone() {
+            if let Some(s) = self.doc.get_mut(id) {
+                shapes::translate(&mut s.kind, dx, dy);
+            }
+        }
+        if self.doc == pre {
+            return;
+        }
+        let continues = self
+            .nudge_run
+            .as_ref()
+            .is_some_and(|(ids, doc, generation)| {
+                *ids == self.selected && *doc == pre && *generation == self.undo.generation()
+            });
+        if !continues {
+            self.undo.push(&pre);
+        }
+        self.nudge_run = Some((
+            self.selected.clone(),
+            self.doc.clone(),
+            self.undo.generation(),
+        ));
     }
 
     /// Screen px point zoom keys zoom around: the pointer if it is on screen, else the
@@ -1651,22 +1861,33 @@ impl Overlay {
         self.view = v;
     }
 
-    fn on_escape(&mut self, shared: &mut Shared) {
-        if !matches!(self.drag, Drag::None | Drag::Ignore) {
-            // Abort the gesture in progress; undo any live edit.
-            match std::mem::replace(&mut self.drag, Drag::None) {
-                Drag::MoveShapes { pre, .. } | Drag::ResizeShape { pre, .. } => {
-                    self.doc = pre;
-                    self.release_live();
-                }
-                Drag::ResizeSel { start_sel, .. } | Drag::MoveSel { start_sel, .. } => {
-                    self.set_sel(start_sel)
-                }
-                Drag::Marquee { before, .. } => self.selected = before,
-                _ => {}
+    /// Abort the pointer gesture in progress, undoing any live edit. False when there was
+    /// none.
+    fn abort_drag(&mut self) -> bool {
+        if matches!(self.drag, Drag::None | Drag::Ignore) {
+            return false;
+        }
+        match std::mem::replace(&mut self.drag, Drag::None) {
+            Drag::MoveShapes { pre, .. } | Drag::ResizeShape { pre, .. } => {
+                self.doc = pre;
+                self.release_live();
             }
-            self.cancel_add();
-            self.guides.clear();
+            Drag::ResizeSel {
+                start_sel,
+                start_crop,
+                ..
+            } => self.set_sel_resized(start_sel, start_sel, start_crop),
+            Drag::MoveSel { start_sel, .. } => self.set_sel(start_sel),
+            Drag::Marquee { before, .. } => self.selected = before,
+            _ => {}
+        }
+        self.cancel_add();
+        self.guides.clear();
+        true
+    }
+
+    fn on_escape(&mut self, shared: &mut Shared) {
+        if self.abort_drag() {
             return;
         }
         if self.help_open {
@@ -1746,7 +1967,7 @@ impl Overlay {
     /// hidden) instead of a toast.
     fn copy_hex(&mut self, shared: &mut Shared) {
         let Some(p) = self.last_pointer else { return };
-        let c = self.sample_at(p);
+        let c = self.sample_picture(p);
         self.copy_color(shared, c);
     }
 
@@ -2055,5 +2276,306 @@ mod esc_tests {
             ([0, 0, 0, 255], 4.0)
         );
         assert_eq!(default_tool_style(Tool::Arrow, orange, 6.0), (orange, 6.0));
+    }
+}
+
+/// Editor logic on an `Overlay` without a window: a capture overlay over a made-up frozen
+/// screen with a region selected.
+#[cfg(test)]
+mod editor_tests {
+    use super::*;
+    use stinkshot_platform::capture::Frozen;
+
+    fn white() -> Rgba {
+        Rgba::filled(400, 300, [255, 255, 255, 255])
+    }
+
+    /// Region (0, 0, 200, 150) of `screen` selected, so image px equal canvas px.
+    fn overlay(screen: Rgba) -> Overlay {
+        let mut config = stinkshot_core::config::Config::default();
+        config.capture.snap_to_elements = false;
+        let fonts = Arc::new(Fonts::load_system().unwrap());
+        let frozen = Frozen {
+            bounds: PxRect::new(0, 0, screen.width as i32, screen.height as i32),
+            image: screen,
+            cursor: PxPoint { x: 0, y: 0 },
+            cursor_shot: None,
+            cursor_drawn: false,
+        };
+        let req = OverlayRequest {
+            mode: OverlayMode::Capture,
+            frozen,
+            windows: Vec::new(),
+            layers: Vec::new(),
+            notice: None,
+            from_tray_click: false,
+        };
+        let mut o = Overlay::with_config(req, &config, fonts);
+        o.set_sel(PxRect::new(0, 0, 200, 150));
+        o
+    }
+
+    const RED: [u8; 3] = [200, 0, 0];
+
+    fn picture() -> Rgba {
+        Rgba::filled(20, 10, [RED[0], RED[1], RED[2], 255])
+    }
+
+    fn pictures(o: &Overlay) -> usize {
+        o.doc.shapes.iter().filter(|s| is_picture(s)).count()
+    }
+
+    fn redact(o: &mut Overlay, x: f32) -> ShapeId {
+        let rect = RectF::new(x, 10.0, 30.0, 30.0);
+        o.create_shape(ShapeKind::Redact { rect }, Style::default())
+    }
+
+    #[test]
+    fn picture_added_over_an_empty_text_caret_stays() {
+        let mut o = overlay(white());
+        let (kind, style) = shapes::new_text(PtF::new(10.0, 10.0), &o.params());
+        o.create_textual(kind, style);
+        assert!(o.edit.is_some());
+        o.add_picture(picture());
+        assert!(o.edit.is_none());
+        assert_eq!(pictures(&o), 1);
+        assert_eq!(o.doc.shapes.len(), 1, "the empty text is gone");
+        o.do_undo();
+        assert!(o.doc.shapes.is_empty());
+    }
+
+    #[test]
+    fn picture_added_mid_drag_stays_and_the_drag_is_undone() {
+        let mut o = overlay(white());
+        let id = redact(&mut o, 10.0);
+        let pre = o.doc.clone();
+        // A move in progress, 5 px applied so far.
+        if let Some(s) = o.doc.get_mut(id) {
+            shapes::translate(&mut s.kind, 5.0, 0.0);
+        }
+        o.drag = Drag::MoveShapes {
+            ids: vec![id],
+            start: PtF::new(0.0, 0.0),
+            start_screen: (0.0, 0.0),
+            applied: (5.0, 0.0),
+            bbox: None,
+            pre: pre.clone(),
+            moved: true,
+            toggled: false,
+        };
+        o.add_picture(picture());
+        assert!(matches!(o.drag, Drag::None));
+        assert_eq!(pictures(&o), 1);
+        assert_eq!(o.doc.get(id), pre.get(id));
+    }
+
+    #[test]
+    fn picture_added_during_a_save_waits_for_it() {
+        let mut o = overlay(white());
+        let (_tx, rx) = channel();
+        o.finishing = Some(Finishing {
+            rx,
+            action: FinishAction::Copy,
+            base: Arc::new(white()),
+            doc: o.doc.clone(),
+            rect: PxRect::default(),
+        });
+        o.add_picture(picture());
+        assert_eq!(pictures(&o), 0);
+        assert_eq!(o.pending_pictures.len(), 1);
+        // A canvas being saved is not offered for Add to Canvas in the first place.
+        o.annotate_meta = Some(("canvas", None, o.source_info(PxRect::new(0, 0, 10, 10))));
+        assert!(!o.is_canvas());
+        o.finishing = None;
+        assert!(o.is_canvas());
+    }
+
+    #[test]
+    fn pasted_picture_survives_several_regions() {
+        let mut o = overlay(white());
+        o.extra_regions.push(PxRect::new(220, 0, 100, 100));
+        o.paste_image(picture());
+        // The regions are one picture now, so finishing has nothing left to combine
+        // (combining starts a new document).
+        assert!(o.extra_regions.is_empty());
+        assert!(matches!(o.kind, Kind::Annotate));
+        o.combine_regions();
+        assert_eq!(pictures(&o), 1);
+    }
+
+    #[test]
+    fn pasted_shapes_survive_several_regions() {
+        let mut o = overlay(white());
+        o.extra_regions.push(PxRect::new(220, 0, 100, 100));
+        o.clipboard = vec![Shape {
+            id: 99,
+            kind: ShapeKind::Redact {
+                rect: RectF::new(10.0, 10.0, 30.0, 30.0),
+            },
+            style: Style::default(),
+        }];
+        // The shapes were copied "just now": Ctrl+V pastes them, not the system clipboard.
+        o.clipboard_seq = clipboard::sequence();
+        o.paste_shapes(1.0);
+        assert!(o.extra_regions.is_empty());
+        o.combine_regions();
+        assert_eq!(o.doc.shapes.len(), 1);
+    }
+
+    #[test]
+    fn edit_keys_wait_for_the_gesture_to_end() {
+        let mut o = overlay(white());
+        assert!(o.edit_keys_allowed());
+        o.drag = Drag::Marquee {
+            start: PtF::new(0.0, 0.0),
+            cur: PtF::new(5.0, 5.0),
+            additive: false,
+            before: Vec::new(),
+            start_screen: (0.0, 0.0),
+        };
+        assert!(!o.edit_keys_allowed());
+        // A press on the toolbar is not a gesture on the picture.
+        o.drag = Drag::Ignore;
+        assert!(o.edit_keys_allowed());
+    }
+
+    #[test]
+    fn arrow_nudges_of_one_selection_share_an_undo_entry() {
+        let mut o = overlay(white());
+        let a = redact(&mut o, 10.0);
+        let _b = redact(&mut o, 60.0);
+        let start = o.doc.clone();
+        o.nudge_selected(1.0, 0.0);
+        o.nudge_selected(1.0, 0.0);
+        o.nudge_selected(0.0, 3.0);
+        o.do_undo();
+        assert_eq!(o.doc, start, "one undo takes back the whole run");
+        o.do_redo();
+        // After an undo or redo, and for another selection, a new entry starts.
+        o.nudge_selected(1.0, 0.0);
+        let mid = o.doc.clone();
+        o.select_only(a);
+        o.nudge_selected(1.0, 0.0);
+        o.nudge_selected(1.0, 0.0);
+        o.do_undo();
+        assert_eq!(o.doc, mid);
+        o.do_undo();
+        o.do_undo();
+        assert_eq!(o.doc, start);
+    }
+
+    #[test]
+    fn typing_shortcuts_keep_only_their_own_keys() {
+        let k = Keys {
+            esc: true,
+            enter: true,
+            delete: true,
+            save: true,
+            pin: true,
+            tool: Some(Tool::Pen),
+            palette: Some(2),
+            ..Keys::default()
+        };
+        let esc = k.only_esc();
+        assert!(esc.esc && !esc.enter && !esc.delete && !esc.save && esc.palette.is_none());
+        let fin = k.only_finish();
+        assert!(fin.save && fin.pin && !fin.esc && !fin.enter && !fin.delete);
+        assert!(fin.tool.is_none() && fin.palette.is_none());
+    }
+
+    #[test]
+    fn cover_text_takes_the_colors_where_it_lands() {
+        // Light on the left, dark from x = 100.
+        let dark = [20, 20, 20, 255];
+        let mut screen = white();
+        for x in 100..400 {
+            for y in 0..300 {
+                screen.set_pixel(x, y, dark);
+            }
+        }
+        let mut o = overlay(screen);
+        let (mut kind, style) = shapes::new_text(PtF::new(4.0, 10.0), &o.params());
+        if let ShapeKind::Text { size, text, .. } = &mut kind {
+            *size = 16.0;
+            *text = "ab".into();
+        }
+        let id = o.doc.add(kind, style);
+        o.set_cover_on(id, true);
+        let bg = |o: &Overlay| match o.doc.get(id).map(|s| &s.kind) {
+            Some(ShapeKind::Text {
+                background, cover, ..
+            }) => background.filter(|_| *cover),
+            _ => None,
+        };
+        assert_eq!(bg(&o), Some([255, 255, 255, 255]));
+        // Moved onto the dark half (what a drag leaves on release).
+        if let Some(s) = o.doc.get_mut(id) {
+            shapes::translate(&mut s.kind, 116.0, 0.0);
+        }
+        o.resample_covers(&[id]);
+        assert_eq!(bg(&o), Some(dark));
+    }
+
+    #[test]
+    fn content_image_has_the_pasted_pictures_and_is_cached() {
+        let mut o = overlay(white());
+        let bare = o.content_image();
+        assert!(Arc::ptr_eq(&bare, &o.ensure_base()));
+        // 20x10, centred on the 200x150 region: x 90..110, y 70..80.
+        o.paste_image(picture());
+        let with = o.content_image();
+        assert_eq!(paint::sample(&with, 100, 75), RED);
+        assert_eq!(paint::sample(&o.ensure_base(), 100, 75), [255, 255, 255]);
+        assert!(Arc::ptr_eq(&with, &o.content_image()));
+        // Other annotations are not part of it and do not remake it.
+        redact(&mut o, 10.0);
+        assert!(Arc::ptr_eq(&with, &o.content_image()));
+        assert_eq!(paint::sample(&with, 20, 20), [255, 255, 255]);
+        // Moving the picture does.
+        for s in o.doc.shapes.iter_mut().filter(|s| is_picture(s)) {
+            shapes::translate(&mut s.kind, 60.0, 40.0);
+        }
+        let moved = o.content_image();
+        assert!(!Arc::ptr_eq(&with, &moved));
+        assert_eq!(paint::sample(&moved, 100, 75), [255, 255, 255]);
+        assert_eq!(paint::sample(&moved, 160, 115), RED);
+        // The eyedropper sees it (canvas px equal image px here).
+        assert_eq!(o.sample_picture((160.5, 115.5)), RED);
+    }
+
+    #[test]
+    fn crop_resize_converts_only_the_dragged_edges() {
+        // A 1000x800 picture shown at 30% with its corner at canvas (50, 40).
+        let (origin, scale, size) = ((50.0, 40.0), 0.3, (1000, 800));
+        let start_crop = PxRect::new(101, 203, 555, 333);
+        let on_canvas = |v: i32, o: f32| (o + v as f32 * scale).round() as i32;
+        let (x0, y0) = (
+            on_canvas(start_crop.x, origin.0),
+            on_canvas(start_crop.y, origin.1),
+        );
+        let start_sel = PxRect::new(
+            x0,
+            y0,
+            on_canvas(start_crop.right(), origin.0) - x0,
+            on_canvas(start_crop.bottom(), origin.1) - y0,
+        );
+        let crop = |new: PxRect| crop_for_resize(new, start_sel, start_crop, origin, scale, size);
+        // A click on a handle: nothing moves (a round trip through canvas px would turn
+        // x = 101 into 100).
+        assert_eq!(crop(start_sel), start_crop);
+        // The right edge dragged 30 canvas px: only that edge changes.
+        let new = PxRect::new(start_sel.x, start_sel.y, start_sel.w + 30, start_sel.h);
+        let c = crop(new);
+        assert_eq!(
+            (c.x, c.y, c.bottom()),
+            (start_crop.x, start_crop.y, start_crop.bottom())
+        );
+        assert_eq!(
+            c.right(),
+            ((new.right() as f32 - origin.0) / scale).round() as i32
+        );
+        // Dragged edges stay inside the picture.
+        let far = PxRect::new(start_sel.x, start_sel.y, 5000, start_sel.h);
+        assert_eq!(crop(far).right(), 1000);
     }
 }

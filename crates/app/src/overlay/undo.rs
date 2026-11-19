@@ -9,6 +9,8 @@ const MAX_DEPTH: usize = 200;
 pub struct UndoStack {
     past: Vec<Doc>,
     future: Vec<Doc>,
+    /// Counts every change to the stack (see `generation`).
+    generation: u64,
 }
 
 impl UndoStack {
@@ -27,6 +29,13 @@ impl UndoStack {
             self.past.remove(0);
         }
         self.future.clear();
+        self.generation += 1;
+    }
+
+    /// Changes whenever an entry is pushed, undone or redone: equal values mean the stack
+    /// was not touched in between (arrow-key nudges use it to share one entry).
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 
     pub fn can_undo(&self) -> bool {
@@ -47,12 +56,14 @@ impl UndoStack {
     pub fn undo(&mut self, current: &Doc) -> Option<Doc> {
         let prev = self.past.pop()?;
         self.future.push(current.clone());
+        self.generation += 1;
         Some(prev)
     }
 
     pub fn redo(&mut self, current: &Doc) -> Option<Doc> {
         let next = self.future.pop()?;
         self.past.push(current.clone());
+        self.generation += 1;
         Some(next)
     }
 

@@ -10,7 +10,10 @@ pub struct PxPoint {
 }
 
 /// Integer rectangle. `w`/`h` are always >= 0 for a normalized rect.
+/// A field missing from stored data reads as 0, so one unusable value in a saved rect
+/// (config `capture.last_region`) costs that value and not the whole file.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(default)]
 pub struct PxRect {
     pub x: i32,
     pub y: i32,
@@ -115,12 +118,45 @@ impl RectF {
             self.h + 2.0 * by,
         )
     }
-    /// Smallest integer rect covering this one.
+    /// Smallest integer rect covering this one. Edges far outside any image (a damaged
+    /// sidecar) are clamped to +-2^29, so the width between two of them and `right()` /
+    /// `bottom()` still fit an i32 instead of wrapping.
     pub fn to_px(&self) -> PxRect {
-        let x0 = self.x.floor() as i32;
-        let y0 = self.y.floor() as i32;
-        let x1 = (self.x + self.w).ceil() as i32;
-        let y1 = (self.y + self.h).ceil() as i32;
+        const LIMIT: f32 = (1 << 29) as f32;
+        let edge = |v: f32| v.clamp(-LIMIT, LIMIT) as i32;
+        let x0 = edge(self.x.floor());
+        let y0 = edge(self.y.floor());
+        let x1 = edge((self.x + self.w).ceil());
+        let y1 = edge((self.y + self.h).ceil());
         PxRect::new(x0, y0, x1 - x0, y1 - y0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn to_px_clamps_instead_of_wrapping() {
+        assert_eq!(
+            RectF::new(1.5, 2.5, 3.0, 4.0).to_px(),
+            PxRect::new(1, 2, 4, 5)
+        );
+        // Corners beyond both ends of the i32 range: their distance does not fit one.
+        let r = RectF::new(-3.0e9, -3.0e9, 6.0e9, 6.0e9).to_px();
+        assert_eq!((r.x, r.y), (-(1 << 29), -(1 << 29)));
+        assert_eq!((r.right(), r.bottom()), (1 << 29, 1 << 29));
+        assert_eq!(
+            r.intersect(&PxRect::new(0, 0, 10, 10)),
+            Some(PxRect::new(0, 0, 10, 10))
+        );
+        let nan = RectF::new(f32::NAN, 0.0, f32::INFINITY, 1.0).to_px();
+        assert_eq!(nan.x, 0);
+    }
+
+    #[test]
+    fn a_rect_with_a_missing_field_still_reads() {
+        let r: PxRect = serde_json::from_str("{\"x\": 3, \"w\": 5}").unwrap();
+        assert_eq!(r, PxRect::new(3, 0, 5, 0));
     }
 }

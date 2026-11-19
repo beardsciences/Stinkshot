@@ -211,7 +211,13 @@ fn worker() {
             }
         };
         let Some(job) = job else { continue };
-        if let Some(retry) = run(job) {
+        // One file that trips the optimizer must not end re-compression until restart.
+        let retry = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(job)))
+            .unwrap_or_else(|_| {
+                log::error!("png re-compression of one file panicked; skipped");
+                None
+            });
+        if let Some(retry) = retry {
             let mut jobs = q.jobs.lock().unwrap_or_else(|e| e.into_inner());
             jobs.push_back(retry);
         }
@@ -240,6 +246,14 @@ fn unchanged(job: &Job) -> bool {
     std::fs::metadata(&job.path)
         .ok()
         .is_some_and(|md| md.len() == job.len && md.modified().ok() == Some(job.modified))
+}
+
+/// How info and warning lines name a job: the history item id, never the file name.
+fn job_label(job: &Job) -> String {
+    match &job.item {
+        Some((_, id)) => format!("item {id}"),
+        None => "a saved copy".to_string(),
+    }
 }
 
 /// Process one job. Returns it again when it should be retried later.
@@ -277,7 +291,9 @@ fn run(mut job: Job) -> Option<Job> {
             return None;
         }
         Err(e) => {
-            log::warn!("recompress: {name}: {e:#}");
+            // File names can carry window titles: the name stays at debug level.
+            log::warn!("recompress: {}: {e:#}", job_label(&job));
+            log::debug!("recompress: that file is {name}");
             return None;
         }
     };
@@ -308,7 +324,8 @@ fn run(mut job: Job) -> Option<Job> {
             let saved = original.len().saturating_sub(smaller.len()) as u64;
             let total = SAVED.fetch_add(saved, Ordering::Relaxed) + saved;
             log::info!(
-                "recompressed {name}: {} -> {} bytes ({:.0}%), {} MB saved this session",
+                "recompressed {}: {} -> {} bytes ({:.0}%), {} MB saved this session",
+                job_label(&job),
                 original.len(),
                 smaller.len(),
                 100.0 * smaller.len() as f64 / original.len() as f64,

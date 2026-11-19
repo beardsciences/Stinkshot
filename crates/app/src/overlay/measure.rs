@@ -149,8 +149,8 @@ impl Overlay {
         if self.snap_edges == alt {
             return PtF::new(ip.x.round(), ip.y.round());
         }
-        let base = self.ensure_base();
-        snap_edge(&base, ip, SNAP_RADIUS)
+        let img = self.content_image();
+        snap_edge(&img, ip, SNAP_RADIUS)
     }
 
     /// DPI scale for the logical readout: the scale the pixels were captured at. On the

@@ -251,14 +251,15 @@ fn next_restart_count(prior: u32, uptime: std::time::Duration) -> Option<u32> {
 }
 
 /// Start a new instance (`--tray`, same profile) that takes over once this process has
-/// exited. Returns whether it was started.
-pub fn relaunch() -> bool {
+/// exited. `why` names the cause in the log ("GPU device loss", "an internal error").
+/// Returns whether it was started; when not, the caller tells the user.
+pub fn relaunch(why: &str) -> bool {
     let uptime = STARTED
         .get()
         .map_or(std::time::Duration::ZERO, |t| t.elapsed());
     let Some(count) = next_restart_count(PRIOR_RESTARTS.load(Ordering::SeqCst), uptime) else {
         log::error!(
-            "GPU device lost {MAX_QUICK_RESTARTS} times in a row within {} s of start-up;              not restarting",
+            "{why}: {MAX_QUICK_RESTARTS} restarts in a row within {} s of start-up; not restarting",
             QUICK_RESTART.as_secs()
         );
         return false;
@@ -278,7 +279,7 @@ pub fn relaunch() -> bool {
         .spawn()
     {
         Ok(c) => {
-            log::warn!("restarting after GPU device loss (new pid {})", c.id());
+            log::warn!("restarting after {why} (new pid {})", c.id());
             true
         }
         Err(e) => {
@@ -320,7 +321,7 @@ pub fn wait_for_predecessor() {
             let _ = CloseHandle(h);
         }
     }
-    log::info!("restarted after GPU device loss in process {pid}");
+    log::info!("restarted after a failure in process {pid}");
 }
 
 /// Diagnostics only: `STINKSHOT_TEST_GPU_LOSS=N` destroys the device while the Nth overlay

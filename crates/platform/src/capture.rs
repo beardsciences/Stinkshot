@@ -40,8 +40,9 @@ use windows::Win32::Graphics::Dxgi::{
 };
 use windows::Win32::Graphics::Gdi::{
     BI_RGB, BITMAP, BITMAPINFO, BITMAPINFOHEADER, BitBlt, CAPTUREBLT, CreateCompatibleDC,
-    CreateDIBSection, DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC, GetObjectW, HBITMAP, HGDIOBJ,
-    ReleaseDC, SRCCOPY, SelectObject,
+    CreateDIBSection, DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC, GetMonitorInfoW, GetObjectW,
+    HBITMAP, HGDIOBJ, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow, ReleaseDC, SRCCOPY,
+    SelectObject,
 };
 use windows::Win32::Storage::Xps::{PRINT_WINDOW_FLAGS, PrintWindow};
 use windows::Win32::System::WinRT::Direct3D11::{
@@ -1692,9 +1693,68 @@ fn wgc_with_timeout(hwnd: Hwnd, include_cursor: bool) -> anyhow::Result<Rgba> {
     }
 }
 
+/// First Windows 11 build: windows have rounded corners from here on.
+const WIN11_BUILD: u32 = 22000;
+
+/// The OS build number (0 when it cannot be read), unaffected by the manifest.
+fn os_build() -> u32 {
+    /// OSVERSIONINFOW.
+    #[repr(C)]
+    struct OsVersionInfo {
+        size: u32,
+        major: u32,
+        minor: u32,
+        build: u32,
+        platform: u32,
+        csd_version: [u16; 128],
+    }
+    windows::core::link!("ntdll.dll" "system" fn RtlGetVersion(info: *mut OsVersionInfo) -> i32);
+    static BUILD: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *BUILD.get_or_init(|| {
+        let mut info = OsVersionInfo {
+            size: std::mem::size_of::<OsVersionInfo>() as u32,
+            major: 0,
+            minor: 0,
+            build: 0,
+            platform: 0,
+            csd_version: [0; 128],
+        };
+        // SAFETY: `info` is a live OSVERSIONINFOW with its size set.
+        if unsafe { RtlGetVersion(&mut info) } == 0 {
+            info.build
+        } else {
+            0
+        }
+    })
+}
+
+/// The full rect of the monitor `hwnd` is on (or nearest to).
+fn window_monitor_rect(hwnd: HWND) -> Option<PxRect> {
+    let mut info = MONITORINFO {
+        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    // SAFETY: `info` is a live MONITORINFO with its size set.
+    let ok =
+        unsafe { GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mut info) };
+    ok.as_bool().then(|| rect_from_win(&info.rcMonitor))
+}
+
+/// Whether DWM draws `frame` with rounded corners: Windows 11 only, and not for a
+/// maximized window or one that fills its monitor (borderless full screen).
+fn has_rounded_corners(
+    build: u32,
+    maximized: bool,
+    frame: PxRect,
+    monitor: Option<PxRect>,
+) -> bool {
+    build >= WIN11_BUILD && !maximized && monitor != Some(frame)
+}
+
 /// PrintWindow(PW_RENDERFULLCONTENT) fallback: asks the window to render itself (through DWM
 /// for modern apps), so occluded windows still work. The result covers the full window rect,
-/// is opaque, and gets Windows 11 rounded-corner alpha applied for non-maximized windows.
+/// is opaque, and gets rounded-corner alpha applied where Windows rounds the window
+/// (`has_rounded_corners`).
 fn printwindow_capture(hwnd: HWND) -> anyhow::Result<Rgba> {
     let (frame, outer) =
         window_bounds(hwnd).ok_or_else(|| anyhow::anyhow!("window has no bounds"))?;
@@ -1738,7 +1798,7 @@ fn printwindow_capture(hwnd: HWND) -> anyhow::Result<Rgba> {
     };
     // SAFETY: trivial queries.
     let (maximized, dpi) = unsafe { (IsZoomed(hwnd).as_bool(), GetDpiForWindow(hwnd)) };
-    if !maximized {
+    if has_rounded_corners(os_build(), maximized, frame, window_monitor_rect(hwnd)) {
         let radius = 8.0 * dpi.max(96) as f32 / 96.0;
         let rel = PxRect::new(frame.x - outer.x, frame.y - outer.y, frame.w, frame.h);
         apply_corner_alpha(&mut img, rel, radius);
@@ -2503,6 +2563,30 @@ mod tests {
         let c = combine_black_white(&[128, 128, 128, 255], &[255, 255, 255, 255], 1, 1);
         let p = c.pixel(0, 0);
         assert!((p[3] as i32 - 128).abs() <= 1 && p[0] >= 250);
+    }
+
+    #[test]
+    fn corners_round_only_on_windows_11_floating_windows() {
+        let monitor = Some(PxRect::new(0, 0, 1920, 1080));
+        let floating = PxRect::new(100, 100, 800, 600);
+        assert!(has_rounded_corners(22000, false, floating, monitor));
+        assert!(has_rounded_corners(26200, false, floating, None));
+        // Windows 10 (and an unreadable build) has square corners.
+        assert!(!has_rounded_corners(19045, false, floating, monitor));
+        assert!(!has_rounded_corners(0, false, floating, monitor));
+        // Maximized, or borderless full screen (the frame is the monitor).
+        assert!(!has_rounded_corners(22000, true, floating, monitor));
+        assert!(!has_rounded_corners(
+            22000,
+            false,
+            PxRect::new(0, 0, 1920, 1080),
+            monitor
+        ));
+    }
+
+    #[test]
+    fn os_build_is_read() {
+        assert!(os_build() >= 10240, "{}", os_build());
     }
 
     #[test]

@@ -83,7 +83,7 @@ enum Sub {
         #[arg(short, long)]
         out: Option<PathBuf>,
         /// Monitor number, 1-based, in system order. Default: the monitor under the cursor.
-        #[arg(short, long)]
+        #[arg(short, long, value_parser = monitor_number)]
         monitor: Option<usize>,
         /// Include the mouse cursor.
         #[arg(long)]
@@ -158,6 +158,15 @@ fn command_of(sub: &Sub) -> Command {
         Sub::Quit => Command::Quit,
         #[cfg(feature = "soak")]
         Sub::Soak { args } => Command::Soak(args.clone()),
+    }
+}
+
+/// `--monitor` counts from 1: 0 is an error, not another name for the first monitor.
+fn monitor_number(s: &str) -> Result<usize, String> {
+    match s.trim().parse::<usize>() {
+        Ok(0) => Err("monitor numbers start at 1".into()),
+        Ok(n) => Ok(n),
+        Err(_) => Err("expected a monitor number (1, 2, ...)".into()),
     }
 }
 
@@ -382,6 +391,18 @@ mod tests {
         assert!(command_from_args(&[]).is_none());
         assert!(command_from_args(&args(&["--tray"])).is_none());
         assert!(command_from_args(&args(&["frobnicate"])).is_none());
+    }
+
+    #[test]
+    fn monitor_zero_is_rejected() {
+        assert_eq!(monitor_number("1"), Ok(1));
+        assert_eq!(monitor_number("3"), Ok(3));
+        assert!(monitor_number("0").is_err());
+        assert!(monitor_number("-1").is_err());
+        assert!(monitor_number("two").is_err());
+        let argv = ["stinkshot", "full", "--out", "a.png", "--monitor", "0"];
+        let err = Cli::try_parse_from(argv).expect_err("--monitor 0 is an error");
+        assert!(err.to_string().contains("start at 1"), "{err}");
     }
 
     #[test]

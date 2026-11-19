@@ -136,7 +136,59 @@ enum Backend {
         dup: Option<IDXGIOutputDuplication>,
         /// Consecutive frames delivered in a format other than BGRA8.
         bad_format: u32,
+        loss: DupLoss,
     },
+}
+
+/// A lost duplication is re-created at most this often (each attempt is a kernel call that
+/// fails for as long as the cause lasts).
+const DUP_RETRY_EVERY: Duration = Duration::from_millis(250);
+/// A duplication that cannot be re-created for this long is reported as `DisplayLost`.
+const DUP_LOST_AFTER: Duration = Duration::from_secs(1);
+
+/// Bookkeeping for a lost duplication (see `poll_dup`).
+struct DupLoss {
+    /// The monitor as it was when the capture was planned.
+    monitor: MonitorRect,
+    /// When the duplication went away; None while it is live.
+    since: Option<Instant>,
+    retry_at: Instant,
+}
+
+impl DupLoss {
+    fn new(monitor: MonitorRect) -> Self {
+        Self {
+            monitor,
+            since: None,
+            retry_at: Instant::now(),
+        }
+    }
+}
+
+/// The monitor is still attached with the same handle, position and size.
+fn monitor_unchanged(planned: &MonitorRect, now: &[MonitorRect]) -> bool {
+    now.iter()
+        .any(|m| m.handle == planned.handle && m.rect == planned.rect)
+}
+
+/// Whether a duplication that failed to come back should end this capturer. The secure
+/// desktop (UAC prompt, lock screen) refuses duplication for as long as it shows while the
+/// display itself is unchanged: a new capturer would fail the same way and end the
+/// recording, so that case keeps waiting.
+fn dup_loss_is_final(lost_for: Duration, secure_desktop: bool) -> bool {
+    !secure_desktop && lost_for > DUP_LOST_AFTER
+}
+
+/// `DisplayLost` when the D3D device is gone (driver update, GPU reset or removal), so the
+/// recorder builds a new capturer and device; otherwise `e` as it is.
+fn device_lost_or(device: &ID3D11Device, e: anyhow::Error) -> anyhow::Error {
+    match unsafe { device.GetDeviceRemovedReason() } {
+        Ok(()) => e,
+        Err(why) => {
+            log::warn!("the capture device was removed ({why}); was: {e:#}");
+            anyhow::Error::new(DisplayLost)
+        }
+    }
 }
 
 struct MonCap {
@@ -580,6 +632,7 @@ impl Capturer {
                         output: out,
                         dup: Some(dup),
                         bad_format: 0,
+                        loss: DupLoss::new(*m),
                     },
                     got_frame: false,
                     src: *src,
@@ -676,6 +729,12 @@ impl Capturer {
 
     /// Drain every source; the newest picture of each monitor ends up in the staging texture.
     pub fn poll(&mut self) -> Result<PollStats> {
+        // A removed device fails quietly: WGC just stops delivering and a lost duplication
+        // never comes back, which would hold the last picture for the rest of the recording.
+        if let Err(why) = unsafe { self.device.GetDeviceRemovedReason() } {
+            log::warn!("the capture device was removed ({why})");
+            return Err(anyhow::Error::new(DisplayLost));
+        }
         self.recheck_colors()?;
         let mut stats = PollStats::default();
         for m in &mut self.mons {
@@ -709,6 +768,7 @@ impl Capturer {
                     output,
                     dup,
                     bad_format,
+                    loss,
                 } => poll_dup(
                     &self.device,
                     &self.ctx,
@@ -716,6 +776,7 @@ impl Capturer {
                     output,
                     dup,
                     bad_format,
+                    loss,
                     m.src,
                     &mut stats,
                 )?,
@@ -816,7 +877,8 @@ impl Capturer {
             let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
             self.ctx
                 .Map(&self.stage, 0, D3D11_MAP_READ, 0, Some(&mut mapped))
-                .context("Map(staging)")?;
+                .context("Map(staging)")
+                .map_err(|e| device_lost_or(&self.device, e))?;
             Ok(Mapped {
                 cap: self,
                 data: mapped.pData as *const u8,
@@ -920,14 +982,40 @@ fn poll_dup(
     output: &IDXGIOutput1,
     dup: &mut Option<IDXGIOutputDuplication>,
     bad_format: &mut u32,
+    loss: &mut DupLoss,
     src: PxRect,
     stats: &mut PollStats,
 ) -> Result<bool> {
     let mut got = false;
     let hdr = target.format == DXGI_FORMAT_R16G16B16A16_FLOAT;
     if dup.is_none() {
-        // lost earlier (mode change, UAC desktop): try to re-establish quietly
-        *dup = duplicate_output(output, device, hdr).ok();
+        // Lost earlier (mode change, HDR toggle, UAC desktop): re-establish it quietly, a
+        // few times a second rather than on every poll.
+        let now = Instant::now();
+        let since = *loss.since.get_or_insert(now);
+        if now < loss.retry_at {
+            return Ok(false);
+        }
+        loss.retry_at = now + DUP_RETRY_EVERY;
+        // The mode or arrangement changed: the crop planned for this monitor is stale even
+        // if the output can be duplicated again.
+        if !monitor_unchanged(&loss.monitor, &enumerate_monitors()) {
+            return Err(anyhow::Error::new(DisplayLost));
+        }
+        match duplicate_output(output, device, hdr) {
+            Ok(d) => {
+                *dup = Some(d);
+                loss.since = None;
+            }
+            Err(e) => {
+                let secure = dup_hresult(&e) == Some(E_ACCESSDENIED);
+                if dup_loss_is_final(now.duration_since(since), secure) {
+                    log::warn!("screen duplication did not come back: {e:#}");
+                    return Err(anyhow::Error::new(DisplayLost));
+                }
+                return Ok(false);
+            }
+        }
     }
     let Some(d) = dup.as_ref() else {
         return Ok(false);
@@ -988,7 +1076,12 @@ fn poll_dup(
                 *dup = None;
                 break;
             }
-            Err(e) => return Err(anyhow!("AcquireNextFrame failed: {e}")),
+            Err(e) => {
+                return Err(device_lost_or(
+                    device,
+                    anyhow!("AcquireNextFrame failed: {e}"),
+                ));
+            }
         }
     }
     if got {
@@ -1356,6 +1449,39 @@ impl Drop for Capturer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_moved_resized_or_missing_monitor_no_longer_matches_the_plan() {
+        let planned = MonitorRect {
+            handle: 7,
+            rect: PxRect::new(0, 0, 1920, 1080),
+        };
+        let other = MonitorRect {
+            handle: 9,
+            rect: PxRect::new(1920, 0, 1920, 1080),
+        };
+        assert!(monitor_unchanged(&planned, &[other, planned]));
+        assert!(!monitor_unchanged(&planned, &[other]));
+        assert!(!monitor_unchanged(&planned, &[]));
+        let resized = MonitorRect {
+            rect: PxRect::new(0, 0, 1280, 720),
+            ..planned
+        };
+        assert!(!monitor_unchanged(&planned, &[resized]));
+        let moved = MonitorRect {
+            rect: PxRect::new(-1920, 0, 1920, 1080),
+            ..planned
+        };
+        assert!(!monitor_unchanged(&planned, &[moved]));
+    }
+
+    #[test]
+    fn a_lost_duplication_is_final_after_a_second_except_on_the_secure_desktop() {
+        assert!(!dup_loss_is_final(Duration::from_millis(400), false));
+        assert!(dup_loss_is_final(Duration::from_millis(1500), false));
+        // UAC prompt or lock screen: wait it out however long it shows.
+        assert!(!dup_loss_is_final(Duration::from_secs(600), true));
+    }
 
     #[test]
     fn gdi_seed_and_active_write_every_grab() {

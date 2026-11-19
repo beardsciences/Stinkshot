@@ -614,14 +614,46 @@ fn on_bisector(from: PtF, to: PtF, p: PtF) -> PtF {
     pt(m.x + nx * t, m.y + ny * t)
 }
 
-/// Apply a handle drag to `shape`. `p` is the pointer in image px; `constrain` (Shift)
-/// keeps 45 degree angles for lines and arrows, squares and circles for rect-like shapes,
-/// and a symmetric bend for the arrow curve handle.
+/// Shape `id` of `doc` with `handle` dragged to `p` (see `drag_handle_on`). A resize
+/// gesture calls this every frame with the document as it was at the press, so the edge
+/// opposite the handle stays the anchor however far the pointer goes.
+pub fn drag_handle_from(
+    doc: &Doc,
+    id: ShapeId,
+    handle: ShapeHandle,
+    p: PtF,
+    constrain: bool,
+    measure: Measure,
+) -> Option<Shape> {
+    let mut s = doc.get(id)?.clone();
+    let canvas = (doc.base_width as f32, doc.base_height as f32);
+    drag_handle_on(&mut s, handle, p, constrain, canvas, measure);
+    Some(s)
+}
+
+/// `drag_handle_on` without a canvas limit on pictures.
+#[cfg(test)]
 pub fn drag_handle(
     shape: &mut Shape,
     handle: ShapeHandle,
     p: PtF,
     constrain: bool,
+    measure: Measure,
+) {
+    let canvas = (f32::INFINITY, f32::INFINITY);
+    drag_handle_on(shape, handle, p, constrain, canvas, measure);
+}
+
+/// Apply a handle drag to `shape`. `p` is the pointer in image px; `constrain` (Shift)
+/// keeps 45 degree angles for lines and arrows, squares and circles for rect-like shapes,
+/// and a symmetric bend for the arrow curve handle. `canvas` (w, h) limits how large a
+/// picture can get.
+fn drag_handle_on(
+    shape: &mut Shape,
+    handle: ShapeHandle,
+    p: PtF,
+    constrain: bool,
+    canvas: (f32, f32),
     measure: Measure,
 ) {
     let old_main = main_rect(shape);
@@ -671,11 +703,13 @@ pub fn drag_handle(
             };
         }
         (ShapeKind::Callout { tail, .. }, ShapeHandle::Tail) => *tail = p,
-        (
-            ShapeKind::Cursor { rect, image } | ShapeKind::Image { rect, image },
-            ShapeHandle::Rect(h),
-        ) => {
-            *rect = resize_cursor(*rect, h, p, image.width() as f32, image.height() as f32);
+        (ShapeKind::Cursor { rect, image }, ShapeHandle::Rect(h)) => {
+            let (w, ih) = (image.width() as f32, image.height() as f32);
+            *rect = resize_cursor(*rect, h, p, w, ih, CURSOR_SCALE);
+        }
+        (ShapeKind::Image { rect, image }, ShapeHandle::Rect(h)) => {
+            let (w, ih) = (image.width() as f32, image.height() as f32);
+            *rect = resize_cursor(*rect, h, p, w, ih, picture_scale_limits(w, ih, canvas));
         }
         (ShapeKind::Step { center, radius, .. }, ShapeHandle::Rect(_)) => {
             *radius = dist(*center, p).clamp(6.0, 120.0);
@@ -740,9 +774,33 @@ pub fn drag_handle(
     }
 }
 
-/// Resize a pointer by dragging corner `h` to `p`: the opposite corner stays, the aspect
-/// ratio of its `img_w` x `img_h` bitmap is kept, and the scale stays within 1/4x..8x.
-pub fn resize_cursor(r: RectF, h: Handle8, p: PtF, img_w: f32, img_h: f32) -> RectF {
+/// Scale limits of the captured pointer (times its bitmap size).
+const CURSOR_SCALE: (f32, f32) = (0.25, 8.0);
+/// A pasted picture's shorter side stays at least this long (image px)...
+const MIN_PICTURE_SIDE: f32 = 8.0;
+/// ...and its longer side at most this many times the canvas's longer side.
+const MAX_PICTURE_OVER_CANVAS: f32 = 4.0;
+
+/// Scale limits of a pasted picture of `img_w` x `img_h` px on a `canvas` (w, h): by its
+/// size on the canvas, not by scale (a large picture is pasted far below 1/4x).
+pub fn picture_scale_limits(img_w: f32, img_h: f32, canvas: (f32, f32)) -> (f32, f32) {
+    let (short, long) = (img_w.min(img_h).max(1.0), img_w.max(img_h).max(1.0));
+    let lo = (MIN_PICTURE_SIDE / short).min(1.0);
+    let hi = (canvas.0.max(canvas.1) * MAX_PICTURE_OVER_CANVAS / long).max(1.0);
+    (lo, hi)
+}
+
+/// Resize a pointer or a picture by dragging corner `h` to `p`: the opposite corner stays,
+/// the aspect ratio of its `img_w` x `img_h` bitmap is kept, and the scale stays within
+/// `limits` (min, max).
+pub fn resize_cursor(
+    r: RectF,
+    h: Handle8,
+    p: PtF,
+    img_w: f32,
+    img_h: f32,
+    limits: (f32, f32),
+) -> RectF {
     let (hd, vd) = (h.h_dir(), h.v_dir());
     if hd == 0 || vd == 0 || img_w < 1.0 || img_h < 1.0 {
         return r;
@@ -751,7 +809,7 @@ pub fn resize_cursor(r: RectF, h: Handle8, p: PtF, img_w: f32, img_h: f32) -> Re
     let ay = if vd < 0 { r.y + r.h } else { r.y };
     let sx = ((p.x - ax) * hd as f32).max(0.0) / img_w;
     let sy = ((p.y - ay) * vd as f32).max(0.0) / img_h;
-    let s = sx.max(sy).clamp(0.25, 8.0);
+    let s = sx.max(sy).clamp(limits.0, limits.1);
     let (w, h) = (img_w * s, img_h * s);
     RectF::new(
         if hd < 0 { ax - w } else { ax },
@@ -1042,7 +1100,8 @@ pub fn is_highlight(kind: &ShapeKind) -> bool {
 }
 
 /// Recolor a shape. Highlighters keep their translucency; callouts recolor their fill too;
-/// text on a pill recolors the pill and picks readable ink.
+/// text on a pill recolors the pill and picks readable ink; cover text keeps its sampled
+/// box and takes the color as ink.
 pub fn recolor(shape: &mut Shape, color: [u8; 4]) {
     if matches!(
         shape.kind,
@@ -1056,6 +1115,7 @@ pub fn recolor(shape: &mut Shape, color: [u8; 4]) {
     }
     if let ShapeKind::Text {
         background: Some(bg),
+        cover: false,
         ..
     } = &mut shape.kind
     {
@@ -1075,6 +1135,7 @@ pub fn display_color(shape: &Shape) -> [u8; 4] {
         (
             ShapeKind::Text {
                 background: Some(bg),
+                cover: false,
                 ..
             },
             _,
@@ -2518,7 +2579,7 @@ mod tests {
     fn resize_cursor_ignores_edge_handles() {
         let r = RectF::new(0.0, 0.0, 10.0, 20.0);
         assert_eq!(
-            resize_cursor(r, Handle8::Right, pt(50.0, 50.0), 10.0, 20.0),
+            resize_cursor(r, Handle8::Right, pt(50.0, 50.0), 10.0, 20.0, CURSOR_SCALE),
             r
         );
     }
@@ -2595,5 +2656,137 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    fn main_of(s: &Shape) -> RectF {
+        main_rect(s).unwrap()
+    }
+
+    fn close(a: RectF, b: RectF) -> bool {
+        [(a.x, b.x), (a.y, b.y), (a.w, b.w), (a.h, b.h)]
+            .iter()
+            .all(|(p, q)| (p - q).abs() < 0.01)
+    }
+
+    #[test]
+    fn resize_from_the_press_keeps_the_anchor_past_the_far_edge() {
+        let d = doc_with(vec![ShapeKind::Rect {
+            rect: RectF::new(50.0, 50.0, 100.0, 60.0),
+            corner_radius: 0.0,
+        }]);
+        let id = d.shapes[0].id;
+        let h = ShapeHandle::Rect(Handle8::Right);
+        // Past the left edge: the box flips around that edge, which stays where it was.
+        let s = drag_handle_from(&d, id, h, pt(20.0, 80.0), false, &measure).unwrap();
+        assert_eq!(main_of(&s), RectF::new(20.0, 50.0, 30.0, 60.0));
+        // Back out in the same gesture: the full box again, not a sliver at the pointer.
+        let s = drag_handle_from(&d, id, h, pt(200.0, 80.0), false, &measure).unwrap();
+        assert_eq!(main_of(&s), RectF::new(50.0, 50.0, 150.0, 60.0));
+        // The document from the press is what every frame starts from.
+        assert_eq!(main_of(&d.shapes[0]), RectF::new(50.0, 50.0, 100.0, 60.0));
+        assert!(drag_handle_from(&d, id + 1, h, pt(0.0, 0.0), false, &measure).is_none());
+    }
+
+    #[test]
+    fn pen_stroke_survives_a_handle_crossing_its_far_edge() {
+        let d = doc_with(vec![ShapeKind::Pen {
+            points: vec![pt(0.0, 0.0), pt(50.0, 40.0), pt(100.0, 0.0)],
+        }]);
+        let id = d.shapes[0].id;
+        let h = ShapeHandle::Rect(Handle8::Right);
+        let xs = |s: &Shape| match &s.kind {
+            ShapeKind::Pen { points } => points.iter().map(|p| p.x.round()).collect::<Vec<_>>(),
+            _ => Vec::new(),
+        };
+        // On the far edge the stroke has no width for this frame only...
+        let flat = drag_handle_from(&d, id, h, pt(0.0, 20.0), false, &measure).unwrap();
+        assert_eq!(xs(&flat), vec![0.0, 0.0, 0.0]);
+        // ...the next frame starts from the stroke at the press and has its shape back.
+        let back = drag_handle_from(&d, id, h, pt(60.0, 20.0), false, &measure).unwrap();
+        assert_eq!(xs(&back), vec![0.0, 30.0, 60.0]);
+    }
+
+    /// The rect of a pointer or picture shape.
+    fn box_of(s: &Shape) -> RectF {
+        bounds(s, &measure)
+    }
+
+    fn picture_doc() -> (Doc, ShapeId) {
+        // A 400x200 picture pasted at 10% on a 1000x800 canvas.
+        let img = stinkshot_core::annotate::CursorImage::new(stinkshot_core::Rgba::filled(
+            400,
+            200,
+            [0, 0, 0, 255],
+        ));
+        let mut d = Doc::new(1000, 800);
+        let id = d.add(
+            ShapeKind::Image {
+                rect: RectF::new(100.0, 100.0, 40.0, 20.0),
+                image: img,
+            },
+            style(),
+        );
+        (d, id)
+    }
+
+    #[test]
+    fn picture_below_a_quarter_size_keeps_its_size_on_a_handle_touch() {
+        let (d, id) = picture_doc();
+        let h = ShapeHandle::Rect(Handle8::BottomRight);
+        // The handle dragged to where it already is (it used to jump to 25%: 100x50).
+        let s = drag_handle_from(&d, id, h, pt(140.0, 120.0), false, &measure).unwrap();
+        assert!(close(box_of(&s), RectF::new(100.0, 100.0, 40.0, 20.0)));
+        // Smallest: the short side stops at 8 px.
+        let s = drag_handle_from(&d, id, h, pt(101.0, 101.0), false, &measure).unwrap();
+        assert!(close(box_of(&s), RectF::new(100.0, 100.0, 16.0, 8.0)));
+        // Largest: the long side stops at 4x the canvas's long side.
+        let s = drag_handle_from(&d, id, h, pt(9000.0, 9000.0), false, &measure).unwrap();
+        assert!(close(box_of(&s), RectF::new(100.0, 100.0, 4000.0, 2000.0)));
+        // A picture larger than that limit can still go back to its native size.
+        assert_eq!(
+            picture_scale_limits(16000.0, 8000.0, (1000.0, 800.0)).1,
+            1.0
+        );
+    }
+
+    #[test]
+    fn pointer_keeps_its_quarter_to_eight_times_limits() {
+        let (d, id) = cursor_doc();
+        let h = ShapeHandle::Rect(Handle8::BottomRight);
+        let s = drag_handle_from(&d, id, h, pt(51.0, 51.0), false, &measure).unwrap();
+        assert!(close(box_of(&s), RectF::new(50.0, 50.0, 2.5, 5.0)));
+        let s = drag_handle_from(&d, id, h, pt(2000.0, 2000.0), false, &measure).unwrap();
+        assert!(close(box_of(&s), RectF::new(50.0, 50.0, 80.0, 160.0)));
+    }
+
+    #[test]
+    fn recolor_of_cover_text_changes_the_ink_only() {
+        let mut s = Shape {
+            id: 1,
+            kind: ShapeKind::Text {
+                pos: pt(0.0, 0.0),
+                text: "x".into(),
+                size: 20.0,
+                background: None,
+                bold: false,
+                width: None,
+                cover: false,
+            },
+            style: style(),
+        };
+        let page = [240, 240, 235, 255];
+        set_cover(&mut s, Some((page, [10, 10, 10, 255])));
+        recolor(&mut s, [200, 0, 0, 255]);
+        assert!(matches!(
+            s.kind,
+            ShapeKind::Text {
+                background: Some(bg),
+                cover: true,
+                ..
+            } if bg == page
+        ));
+        assert_eq!(s.style.color, [200, 0, 0, 255]);
+        // The toolbar swatch shows what a color pick changes: the ink.
+        assert_eq!(display_color(&s), [200, 0, 0, 255]);
     }
 }

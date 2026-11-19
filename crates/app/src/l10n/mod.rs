@@ -231,7 +231,7 @@ mod tests {
         assert_eq!(english("settings.language"), Some("Language"));
         assert_eq!(english("nope.key"), None);
         assert_eq!(lookup("shell.does-not-exist"), "shell.does-not-exist");
-        assert_eq!(tr!("history.empty.count", n = 7), "7 captures");
+        assert_eq!(tr!("history.results.many", n = 7), "7 captures");
     }
 
     /// Every English key starts with its file's group, is unique, and resolves.

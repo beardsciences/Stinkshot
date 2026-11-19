@@ -326,8 +326,9 @@ fn encode8(l: f32) -> u8 {
 pub struct ScrgbToSrgb {
     /// 1 / (scRGB value of SDR white).
     inv_white: f32,
-    /// Half bit pattern -> sRGB byte, valid for values at or below SDR white.
-    lut: Vec<u8>,
+    /// Half bit pattern -> sRGB byte, valid for values at or below SDR white. One entry per
+    /// u16, so indexing with a half needs no bounds check in the per-pixel path.
+    lut: Box<[u8; 65536]>,
     /// Largest positive half bit pattern that is at or below SDR white.
     max_sdr_bits: i16,
 }
@@ -337,17 +338,19 @@ impl ScrgbToSrgb {
         let white = (sdr_white_nits / SCRGB_UNIT_NITS).max(0.01);
         let inv_white = 1.0 / white;
         let halves = half_f32_lut();
-        let lut: Vec<u8> = halves
-            .iter()
-            .map(|&v| {
-                let l = v * inv_white;
-                if l.is_nan() || l <= 0.0 {
-                    0
-                } else {
-                    (srgb_encode(l.min(1.0)) * 255.0 + 0.5) as u8
-                }
-            })
-            .collect();
+        // Allocated on the heap directly: an array this size would not belong on the stack.
+        let mut lut: Box<[u8; 65536]> = vec![0u8; 65536]
+            .into_boxed_slice()
+            .try_into()
+            .unwrap_or_else(|_| unreachable!("the vec has 65536 entries"));
+        for (out, &v) in lut.iter_mut().zip(halves) {
+            let l = v * inv_white;
+            *out = if l.is_nan() || l <= 0.0 {
+                0
+            } else {
+                (srgb_encode(l.min(1.0)) * 255.0 + 0.5) as u8
+            };
+        }
         // Positive finite halves are ordered like their bit patterns (0x0000..0x7BFF).
         let mut max_sdr_bits = 0i16;
         for bits in 0..0x7c00u16 {

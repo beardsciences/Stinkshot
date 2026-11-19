@@ -196,7 +196,8 @@ impl Overlay {
         self.popup = None;
         let base = self.ensure_base();
         let (tx, rx) = channel();
-        let (img, ctx2) = (base.clone(), ctx.clone());
+        // Read what the picture shows, pasted pictures included.
+        let (img, ctx2) = (self.content_image(), ctx.clone());
         let spawned = std::thread::Builder::new()
             .name("smart-redact".into())
             .spawn(move || {

@@ -294,7 +294,9 @@ fn make_frame(
     attr.set_max_colors(256)
         .map_err(|e| anyhow!("imagequant: {e}"))?;
     let q = quality.min(100);
-    attr.set_quality(q / 2, q.max(1))
+    // Minimum 0: any higher and a busy frame that cannot reach it fails the whole export
+    // with QualityTooLow. The maximum alone still steers the palette.
+    attr.set_quality(0, q.max(1))
         .map_err(|e| anyhow!("imagequant: {e}"))?;
     attr.set_speed(4).map_err(|e| anyhow!("imagequant: {e}"))?;
     let mut img = attr

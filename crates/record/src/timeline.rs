@@ -11,7 +11,13 @@ pub struct Timeline {
     start: Instant,
     paused_at: Option<Instant>,
     paused_total: Duration,
+    /// Latest instant passed to `observe`.
+    last_seen: Option<Instant>,
 }
+
+/// Two `observe` calls further apart than this mean the machine was suspended (or frozen)
+/// in between: the workers call it every few milliseconds.
+pub const CLOCK_GAP: Duration = Duration::from_secs(2);
 
 impl Timeline {
     pub fn new(start: Instant) -> Self {
@@ -19,7 +25,35 @@ impl Timeline {
             start,
             paused_at: None,
             paused_total: Duration::ZERO,
+            last_seen: None,
         }
+    }
+
+    /// Called by the recording workers on every loop pass. The monotonic clock keeps
+    /// running while the PC sleeps, so a jump since the previous call is treated as paused
+    /// time: the recording continues where it stopped instead of gaining hours of held
+    /// picture and silence. Returns the span that was cut, if any.
+    pub fn observe(&mut self, now: Instant) -> Option<Duration> {
+        let Some(last) = self.last_seen else {
+            self.last_seen = Some(now);
+            return None;
+        };
+        // Several threads observe; a reading taken before the latest one changes nothing.
+        if now <= last {
+            return None;
+        }
+        self.last_seen = Some(now);
+        let gap = now - last;
+        if gap <= CLOCK_GAP {
+            return None;
+        }
+        match self.paused_at {
+            // A user pause covers the gap already unless it began inside it.
+            Some(p) if p <= last => return None,
+            Some(p) => self.paused_total += p - last,
+            None => self.paused_total += gap,
+        }
+        Some(gap)
     }
 
     pub fn is_paused(&self) -> bool {
@@ -153,6 +187,55 @@ mod tests {
             tl.elapsed_at(t0 + Duration::from_secs(1)),
             Duration::from_secs(1)
         );
+    }
+
+    #[test]
+    fn timeline_cuts_a_clock_gap() {
+        let t0 = Instant::now();
+        let ms = Duration::from_millis;
+        let mut tl = Timeline::new(t0);
+        // Steady readings, including one just under the threshold, cut nothing.
+        for i in 0..=100 {
+            assert_eq!(tl.observe(t0 + ms(i * 10)), None);
+        }
+        assert_eq!(tl.observe(t0 + ms(1000) + CLOCK_GAP), None);
+        let before = t0 + ms(1000) + CLOCK_GAP;
+        assert_eq!(tl.elapsed_at(before), ms(3000));
+        // One hour asleep: the recording picks up where it stopped.
+        let after = before + Duration::from_secs(3600);
+        assert_eq!(tl.observe(after), Some(Duration::from_secs(3600)));
+        assert_eq!(tl.elapsed_at(after), ms(3000));
+        assert_eq!(tl.elapsed_at(after + ms(500)), ms(3500));
+        // A late reading from another thread, taken before the gap was seen, is ignored.
+        assert_eq!(tl.observe(before), None);
+        assert_eq!(tl.elapsed_at(after + ms(500)), ms(3500));
+    }
+
+    #[test]
+    fn timeline_gap_while_paused_is_not_counted_twice() {
+        let t0 = Instant::now();
+        let s = Duration::from_secs;
+        let mut tl = Timeline::new(t0);
+        tl.observe(t0);
+        tl.observe(t0 + s(1));
+        tl.pause(t0 + s(1));
+        assert_eq!(tl.observe(t0 + s(100)), None);
+        tl.resume(t0 + s(101));
+        assert_eq!(tl.elapsed_at(t0 + s(102)), s(2));
+    }
+
+    #[test]
+    fn timeline_gap_ending_in_a_pause_cuts_up_to_the_pause() {
+        let t0 = Instant::now();
+        let s = Duration::from_secs;
+        let mut tl = Timeline::new(t0);
+        tl.observe(t0 + s(1));
+        // Paused (from the UI thread) at 50 s, before any worker observed the gap.
+        tl.pause(t0 + s(50));
+        assert_eq!(tl.observe(t0 + s(51)), Some(s(50)));
+        assert_eq!(tl.elapsed_at(t0 + s(51)), s(1));
+        tl.resume(t0 + s(60));
+        assert_eq!(tl.elapsed_at(t0 + s(61)), s(2));
     }
 
     #[test]

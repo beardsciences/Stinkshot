@@ -5,9 +5,11 @@
 //!
 //! Update Now (`download_installer`, only when the user clicks it): downloads the setup.exe
 //! the signed manifest lists from stinkshot.com, checks its size and SHA-256 against that
-//! manifest, and runs it silently (`run_installer`). Anything that does not match is deleted
-//! and the release page is opened instead. Copies the setup did not install (portable, dev
-//! builds) always get the release page.
+//! manifest, and runs it silently (`run_installer`, which checks the file once more while
+//! holding it open so it cannot be swapped between the check and the start). Anything that
+//! does not match is deleted and the release page is opened instead. Copies the setup did
+//! not install (portable, dev builds) always get the release page. The first start of the
+//! new version removes the download (`remove_stale_download`).
 //!
 //! Flow (docs/notes/release.md):
 //! 1. GET `stinkshot-release.json` and its minisign signature `stinkshot-release.json.minisig`
@@ -126,6 +128,34 @@ pub fn can_self_update() -> bool {
         .unwrap_or(false)
 }
 
+/// `%TEMP%\Stinkshot-update`, where the installer is downloaded.
+fn download_dir() -> std::path::PathBuf {
+    std::env::temp_dir().join("Stinkshot-update")
+}
+
+/// Set once this process has started a download: its folder is in use, not a leftover.
+static DOWNLOAD_STARTED: std::sync::Mutex<bool> = std::sync::Mutex::new(false);
+
+/// Remove the folder a finished update left in `%TEMP%` (the setup.exe, tens of MB). Returns
+/// false while it cannot be removed yet: the installer that started this copy may still be
+/// running from it. Leaves a download this process started alone.
+pub fn remove_stale_download() -> bool {
+    let started = DOWNLOAD_STARTED.lock().unwrap_or_else(|e| e.into_inner());
+    *started || remove_folder(&download_dir())
+}
+
+/// True when `dir` is gone afterwards.
+fn remove_folder(dir: &std::path::Path) -> bool {
+    match std::fs::remove_dir_all(dir) {
+        Ok(()) => true,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => true,
+        Err(e) => {
+            log::debug!("update: leftover download not removed yet: {e}");
+            false
+        }
+    }
+}
+
 /// Download `inst` into `%TEMP%\Stinkshot-update`, checking its size and SHA-256 against the
 /// signed manifest as it streams. `progress(done, total)` is called as bytes arrive. Returns
 /// the verified file; on any mismatch the partial file is deleted and this is an error.
@@ -135,7 +165,8 @@ pub fn download_installer(
 ) -> anyhow::Result<std::path::PathBuf> {
     use std::io::{Read, Write};
 
-    let dir = std::env::temp_dir().join("Stinkshot-update");
+    let dir = download_dir();
+    *DOWNLOAD_STARTED.lock().unwrap_or_else(|e| e.into_inner()) = true;
     // Never reuse an old download: every update starts from an empty folder.
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).context("update folder could not be created")?;
@@ -206,13 +237,65 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Start the verified installer silently. It asks this copy to quit, replaces it, and starts
+/// Open the downloaded installer for reading with writers and deleters locked out, and check
+/// its size and SHA-256 against the signed manifest again. While the returned handle is
+/// open, no other program can change, replace or remove the file.
+fn open_verified(path: &std::path::Path, inst: &Installer) -> anyhow::Result<std::fs::File> {
+    use std::io::Read;
+    use std::os::windows::fs::OpenOptionsExt;
+    // Others may read (and so execute) it, but not write, rename or delete it.
+    const FILE_SHARE_READ: u32 = 1;
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ)
+        .open(path)
+        .context("the installer could not be opened")?;
+    let len = file
+        .metadata()
+        .context("the installer could not be read")?
+        .len();
+    if len != inst.size {
+        bail!("{UNTRUSTED}: the installer changed after it was downloaded");
+    }
+    let mut hash = ring::digest::Context::new(&ring::digest::SHA256);
+    let mut buf = vec![0u8; 256 * 1024];
+    loop {
+        let n = file
+            .read(&mut buf)
+            .context("the installer could not be read")?;
+        if n == 0 {
+            break;
+        }
+        hash.update(&buf[..n]);
+    }
+    if hex(hash.finish().as_ref()) != inst.sha256 {
+        bail!("{UNTRUSTED}: the installer changed after it was downloaded");
+    }
+    Ok(file)
+}
+
+/// Start the installer silently, after checking it against the signed manifest once more:
+/// the download was verified as it streamed, but the file then sat in a folder other
+/// programs of this user can write to. It asks this copy to quit, replaces it, and starts
 /// the new version in the tray (packaging/inno/stinkshot.iss, RelaunchAfterSilentUpgrade).
-pub fn run_installer(path: &std::path::Path) -> anyhow::Result<std::process::Child> {
-    std::process::Command::new(path)
+pub fn run_installer(
+    path: &std::path::Path,
+    inst: &Installer,
+) -> anyhow::Result<std::process::Child> {
+    let verified = match open_verified(path, inst) {
+        Ok(f) => f,
+        Err(e) => {
+            let _ = std::fs::remove_file(path);
+            return Err(e);
+        }
+    };
+    let child = std::process::Command::new(path)
         .args(["/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART"])
         .spawn()
-        .context("the installer could not be started")
+        .context("the installer could not be started");
+    // Held until the process exists: from then on Windows keeps the running image locked.
+    drop(verified);
+    child
 }
 
 /// `stinkshot-release.json`, written and signed by `scripts/release.ps1`.
@@ -395,6 +478,90 @@ mod tests {
     const FIXTURE: &[u8] = include_bytes!("../testdata/update/stinkshot-release.json");
     const FIXTURE_SIG: &str = include_str!("../testdata/update/stinkshot-release.json.minisig");
     const TEST_KEY: &str = include_str!("../testdata/update/test-key.pub");
+
+    fn installer_for(bytes: &[u8]) -> Installer {
+        Installer {
+            name: "Stinkshot-9.9.9-x64-setup.exe".into(),
+            size: bytes.len() as u64,
+            sha256: hex(ring::digest::digest(&ring::digest::SHA256, bytes).as_ref()),
+        }
+    }
+
+    fn scratch_dir(name: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("stinkshot-test-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn installer_is_checked_again_before_it_runs() {
+        let dir = scratch_dir("reverify");
+        let path = dir.join("setup.exe");
+        let good = b"the installer the manifest vouches for".to_vec();
+        let inst = installer_for(&good);
+        std::fs::write(&path, &good).unwrap();
+        let held = open_verified(&path, &inst).expect("unchanged file verifies");
+        // While it is held nobody can swap the file.
+        assert!(std::fs::write(&path, b"swapped").is_err());
+        assert!(std::fs::remove_file(&path).is_err());
+        assert!(std::fs::rename(&path, dir.join("moved.exe")).is_err());
+        // Reading (what starting it needs) still works.
+        assert_eq!(std::fs::read(&path).unwrap(), good);
+        drop(held);
+
+        // Same size, different bytes.
+        let mut swapped = good.clone();
+        swapped[0] ^= 1;
+        std::fs::write(&path, &swapped).unwrap();
+        let err = open_verified(&path, &inst).unwrap_err().to_string();
+        assert!(err.starts_with(UNTRUSTED), "{err}");
+        // Different size.
+        std::fs::write(&path, b"short").unwrap();
+        let err = open_verified(&path, &inst).unwrap_err().to_string();
+        assert!(err.starts_with(UNTRUSTED), "{err}");
+        // `run_installer` refuses it and removes the file, without starting anything.
+        let err = run_installer(&path, &inst).unwrap_err().to_string();
+        assert!(err.starts_with(UNTRUSTED), "{err}");
+        assert!(!path.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_program_starts_while_its_file_is_held_verified() {
+        // The share mode `open_verified` uses must not keep Windows from starting the file.
+        let system = std::env::var_os("SystemRoot").map(std::path::PathBuf::from);
+        let Some(src) = system
+            .map(|s| s.join("System32").join("hostname.exe"))
+            .filter(|p| p.is_file())
+        else {
+            return;
+        };
+        let dir = scratch_dir("spawn-held");
+        let path = dir.join("held.exe");
+        std::fs::copy(&src, &path).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        let held = open_verified(&path, &installer_for(&bytes)).unwrap();
+        let child = std::process::Command::new(&path)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+        drop(held);
+        let mut child = child.expect("starts while the verified handle is open");
+        let _ = child.wait();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn leftover_download_folder_is_removed() {
+        let dir = scratch_dir("leftover");
+        std::fs::write(dir.join("Stinkshot-1.2.3-x64-setup.exe"), b"old").unwrap();
+        assert!(remove_folder(&dir));
+        assert!(!dir.exists());
+        // Already gone counts as removed.
+        assert!(remove_folder(&dir));
+    }
 
     #[test]
     fn newer_versions() {

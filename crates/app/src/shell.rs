@@ -28,7 +28,7 @@
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -66,7 +66,7 @@ use crate::toast::{Toast, ToastKind};
 use crate::tray::Tray;
 use crate::update::Release;
 use crate::workers::{
-    self, BgConfig, BgKick, Env, SCROLL_CANCEL, SCROLL_RUN, SCROLL_STOP, WorkerMsg,
+    self, AfterDiscard, BgConfig, BgKick, Env, SCROLL_CANCEL, SCROLL_RUN, SCROLL_STOP, WorkerMsg,
 };
 use crate::{logger, sysutil, timing, wake};
 
@@ -101,6 +101,102 @@ const SHADOW_IDLE: Duration = Duration::from_secs(30);
 const TRIM_IDLE: Duration = Duration::from_secs(60);
 /// How long a restart after a GPU device loss waits for jobs in flight (`wait_for_jobs`).
 const GPU_RESTART_GRACE: Duration = Duration::from_secs(15);
+/// How long the end of the Windows session (shutdown, restart, sign-out) waits for a
+/// recording to be finalized and for saves in flight.
+const END_SESSION_GRACE: Duration = Duration::from_secs(15);
+/// How long it waits for the UI thread to take the request up before going by job count.
+const END_SESSION_UI_WAIT: Duration = Duration::from_secs(3);
+/// How often an unavailable custom History folder is tried again.
+const HISTORY_RETRY_EVERY: Duration = Duration::from_secs(60);
+
+const END_IDLE: u8 = 0;
+/// Windows asked to end the session; the UI thread has not acted on it yet.
+const END_REQUESTED: u8 = 1;
+/// The UI thread stopped the recording (its finalizing is now a job in flight).
+const END_HANDLED: u8 = 2;
+/// End-of-session hand-over between the session watcher thread and the UI thread.
+static END_SESSION: AtomicU8 = AtomicU8::new(END_IDLE);
+/// A recording is starting, running or stopping (kept current by the UI thread).
+static RECORDING_LIVE: AtomicBool = AtomicBool::new(false);
+
+/// Runs on the session watcher's thread when Windows ends the session
+/// (`system::set_end_session_handler`). The process dies without `quit`, so the exit work
+/// that must not be lost happens here: PrintScreen goes back to Windows (start-up takes it
+/// over again), and a recording is stopped so its file is finalized.
+fn on_end_session(phase: system::EndSessionPhase) -> bool {
+    use system::EndSessionPhase as Phase;
+    match phase {
+        Phase::Query => {
+            let busy = RECORDING_LIVE.load(Ordering::SeqCst) || workers::jobs_in_flight() > 0;
+            END_SESSION.store(END_REQUESTED, Ordering::SeqCst);
+            wake::wake();
+            if busy {
+                // Windows waits while the reason stands; lift it as soon as the work is done.
+                let _ = std::thread::Builder::new()
+                    .name("end-session-wait".into())
+                    .spawn(|| {
+                        end_session_wait();
+                        system::end_session_work_done();
+                    });
+            }
+            busy
+        }
+        Phase::End => {
+            log::info!("Windows is ending the session");
+            if let Err(e) = system::take_over_printscreen(false) {
+                log::warn!("could not restore PrintScreen setting: {e:#}");
+            }
+            // No query came first (forced shutdown): ask the UI thread now.
+            if END_SESSION
+                .compare_exchange(END_IDLE, END_REQUESTED, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+            {
+                wake::wake();
+            }
+            end_session_wait();
+            log::logger().flush();
+            false
+        }
+        Phase::Cancelled => {
+            END_SESSION.store(END_IDLE, Ordering::SeqCst);
+            false
+        }
+    }
+}
+
+/// Block until the UI thread has stopped the recording and jobs in flight (its finalizing,
+/// saves, exports) are done, or `END_SESSION_GRACE` has passed.
+fn end_session_wait() {
+    let start = Instant::now();
+    while END_SESSION.load(Ordering::SeqCst) == END_REQUESTED
+        && start.elapsed() < END_SESSION_UI_WAIT
+    {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    loop {
+        let busy = workers::jobs_in_flight();
+        if busy == 0 {
+            return;
+        }
+        if start.elapsed() >= END_SESSION_GRACE {
+            log::warn!("session ending with {busy} job(s) still running");
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// End the process after a failure the UI could not survive. When no new instance took
+/// over, say so: the tray icon is gone and nothing else would tell the user.
+fn exit_after_failure(relaunched: bool) -> ! {
+    log::logger().flush();
+    if relaunched {
+        std::process::exit(0);
+    }
+    let log = logger::path().display().to_string();
+    sysutil::fatal_box("Stinkshot", &tr!("shell.crash.body", log = log));
+    std::process::exit(1);
+}
 
 /// Block until worker jobs in flight (saves, exports, a recording's stop) have finished or
 /// `max` has passed. For exits that bypass `quit` (the GPU-loss restart).
@@ -175,6 +271,8 @@ pub fn run() -> anyhow::Result<()> {
     // A plain launch (not `--tray`, no subcommand) that started a fresh instance: the user
     // clicked the exe and would otherwise see nothing at all.
     timing::point(format_args!("single-instance mutex acquired"));
+    // This process owns the profile from here on, and with it the log file's rotation.
+    logger::allow_rotation();
     // Answer forwarded commands from now on: a launch right after this one must not wait for
     // fonts, history, OCR and wgpu (about 1 s, more on a cold start) and give up after its 3 s
     // of retries. Commands queue in the channel until the shell's first frame drains them.
@@ -255,11 +353,16 @@ fn start_capture_rewarm() {
         .spawn(move || {
             // Created here so start-up does not wait for the watcher window.
             let (tx, rx) = channel::<system::SessionEvent>();
+            system::set_end_session_handler(tr!("shell.end_session.reason"), on_end_session);
             if let Err(e) = system::start_session_watcher(tx) {
                 log::warn!("capture re-warm-up unavailable: {e:#}");
                 return;
             }
             while let Ok(first) = rx.recv() {
+                // Handled in `on_end_session`; nothing to warm up for.
+                if first == system::SessionEvent::EndSession {
+                    continue;
+                }
                 // A program that held one of our hotkeys may have quit meanwhile.
                 if matches!(
                     first,
@@ -271,7 +374,10 @@ fn start_capture_rewarm() {
                 // Anything that arrived meanwhile is covered by this warm-up.
                 while rx.try_recv().is_ok() {}
                 log::debug!("capture re-warm-up after {first:?}");
-                capture::warm_up();
+                // A failed warm-up must not end the watcher: hotkey retries depend on it.
+                if std::panic::catch_unwind(capture::warm_up).is_err() {
+                    log::error!("capture re-warm-up panicked");
+                }
             }
         });
 }
@@ -435,7 +541,8 @@ struct Boot {
     tray: Option<Tray>,
     hotkeys: Hotkeys,
     hotkey_errors: Vec<String>,
-    /// The custom history folder that could not be opened at start-up (the default is in use).
+    /// The History Folder setting that could not be opened at start-up (the default folder
+    /// is in use until it can be).
     history_fallback: Option<String>,
 }
 
@@ -504,9 +611,11 @@ fn run_app(
                 "history folder {} could not be opened, using the default: {e:#}",
                 history_dir.display()
             );
-            history_fallback = Some(history_dir.display().to_string());
-            config.history.folder.clear();
-            history_dir = config.history_folder();
+            // The setting stays as it is (clearing it here would be saved with the next
+            // settings change and lose it for good): the default folder is a stand-in for
+            // this run only, and the configured one is tried again while the app runs.
+            history_fallback = Some(config.history.folder.clone());
+            history_dir = Config::default().history_folder();
             History::open(&history_dir)
                 .with_context(|| format!("open history folder {}", history_dir.display()))?
         }
@@ -582,11 +691,19 @@ fn run_app(
             // The shell is gone (dropped while unwinding; `Drop for Shell` kept a recording),
             // but saves and exports run on worker threads: let them finish first.
             wait_for_jobs(GPU_RESTART_GRACE);
-            crate::gpu::relaunch();
-            log::logger().flush();
-            std::process::exit(0);
+            exit_after_failure(crate::gpu::relaunch("GPU device loss"));
         }
-        Err(payload) => std::panic::resume_unwind(payload),
+        Err(_) => {
+            // Any other panic on the UI thread (the panic hook logged it). Unwinding dropped
+            // the shell: the tray icon is gone and `Drop for Hotkeys` handed PrintScreen
+            // back. Start over rather than vanish, with the same cap on quick restarts.
+            log::error!("the UI thread panicked; restarting");
+            if let Err(e) = system::take_over_printscreen(false) {
+                log::warn!("could not restore PrintScreen setting: {e:#}");
+            }
+            wait_for_jobs(GPU_RESTART_GRACE);
+            exit_after_failure(crate::gpu::relaunch("an internal error"));
+        }
     }
 }
 
@@ -635,6 +752,8 @@ impl<T> Slot<T> {
 struct ToastSlot {
     slot: Slot<Toast>,
     index: usize,
+    /// Its buttons act on a history item (dropped when the History folder changes).
+    has_item: bool,
 }
 
 /// Ctrl+C / Ctrl+X / Ctrl+V as egui's clipboard events, with the text read from the system
@@ -861,6 +980,15 @@ struct Shell {
     /// The check in flight was asked for by the user (Check Now): always report the outcome.
     update_forced: bool,
     update_retry_at: Instant,
+    /// The History Folder setting that cannot be opened right now: `shared.history` is the
+    /// default folder meanwhile, and the configured one is retried (`retry_history_folder`).
+    history_fallback: Option<String>,
+    history_retry_at: Instant,
+    history_retry_inflight: bool,
+    /// The queued `Command::Quit` came over IPC (`stinkshot quit`): nobody to ask.
+    forwarded_quit: bool,
+    /// The question about unsaved Editor Window edits is on screen (`ask_discard`).
+    discard_asking: bool,
     last_housekeeping: Instant,
     /// Since when nothing has been open or running (`trim_when_idle`), and whether the
     /// working set was trimmed in this quiet spell.
@@ -934,6 +1062,35 @@ fn record_summary(rc: &stinkshot_core::config::Recording, gif: bool, fps: u32) -
         (false, false) => tr!("shell.hud.no_audio"),
     };
     tr!("shell.hud.mp4", fps = fps, audio = audio)
+}
+
+/// Title of the toast for a finished capture, by what actually happened to it. None when
+/// it was neither saved nor copied: "Saved to History" must never be shown for that.
+fn capture_title(s: &workers::CaptureSaved) -> Option<String> {
+    Some(if let Some(p) = &s.saved_as {
+        tr!(
+            "shell.saved.as",
+            name = p
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        )
+    } else if s.action == FinishAction::SaveCopy && s.item.is_some() {
+        tr!("shell.saved.copy").to_string()
+    } else if s.editing {
+        tr!("shell.saved.updated").to_string()
+    } else if s.action == FinishAction::Pin {
+        tr!("shell.saved.pinned").to_string()
+    } else if s.copied_image {
+        tr!("shell.saved.copied").to_string()
+    } else if s.item.is_some() {
+        tr!("shell.saved.history").to_string()
+    } else if s.path.is_some() {
+        // History could not take it; it went to the default folder as a plain file.
+        tr!("shell.saved.default_folder").to_string()
+    } else {
+        return None;
+    })
 }
 
 fn fmt_bytes(b: u64) -> String {
@@ -1044,6 +1201,11 @@ impl Shell {
             update_inflight: false,
             update_forced: false,
             update_retry_at: Instant::now(),
+            history_fallback: history_fallback.clone(),
+            history_retry_at: Instant::now() + HISTORY_RETRY_EVERY,
+            history_retry_inflight: false,
+            forwarded_quit: false,
+            discard_asking: false,
             last_housekeeping: Instant::now(),
             quiet_since: Instant::now(),
             trimmed: false,
@@ -1074,10 +1236,7 @@ impl Shell {
             shell.pending.push_back(cmd);
         }
         for args in early_args {
-            match cli::command_from_args(&args) {
-                Some(cmd) => shell.pending.push_back(cmd),
-                None => log::debug!("ignored forwarded args {args:?}"),
-            }
+            shell.queue_forwarded(&args);
         }
         shell.apply_autostart();
         window_util::set_hide_from_capture(shell.shared.config.general.hide_from_captures);
@@ -1090,7 +1249,8 @@ impl Shell {
                 error: true,
             });
         }
-        if let Some(dir) = history_fallback {
+        if history_fallback.is_some() {
+            let dir = shell.shared.config.history_folder().display().to_string();
             shell.pending.push_back(Command::Notify {
                 title: tr!("shell.history_dir.fallback").into(),
                 body: tr!("shell.history_dir.fallback.body", dir = dir),
@@ -1164,11 +1324,160 @@ impl Shell {
             index += 1;
         }
         let id = self.new_id();
+        let has_item = matches!(
+            kind,
+            ToastKind::Capture { item: Some(_), .. } | ToastKind::Recording { item: Some(_), .. }
+        );
         self.toasts.push(ToastSlot {
             slot: Slot::new(Toast::new(kind, id, index)),
             index,
+            has_item,
         });
         self.touch();
+    }
+
+    /// A command forwarded by another `stinkshot` process.
+    fn queue_forwarded(&mut self, args: &[String]) {
+        match cli::command_from_args(args) {
+            Some(cmd) => {
+                if matches!(cmd, Command::Quit) {
+                    self.forwarded_quit = true;
+                }
+                self.pending.push_back(cmd);
+            }
+            None => log::debug!("ignored forwarded args {args:?}"),
+        }
+    }
+
+    fn unsaved_editors(&self) -> bool {
+        self.editors.iter().any(|e| e.s.has_unsaved_edits())
+    }
+
+    /// Before something that closes every Editor Window (Quit, Update Now): when one has
+    /// unsaved edits, ask first. True when the question is up; `then` runs on Yes
+    /// (`WorkerMsg::DiscardAnswer`).
+    fn ask_discard(&mut self, then: AfterDiscard) -> bool {
+        if !self.unsaved_editors() {
+            return false;
+        }
+        if !self.discard_asking {
+            self.discard_asking = true;
+            let message = match then {
+                AfterDiscard::Quit => tr!("shell.discard.quit"),
+                AfterDiscard::InstallUpdate => tr!("shell.discard.update"),
+            };
+            workers::ask_discard(self.worker_tx.clone(), then, message.to_string());
+        }
+        true
+    }
+
+    /// Quit from the tray (`interactive`) or from `stinkshot quit` (the installer, scripts),
+    /// which cannot wait for an answer.
+    fn request_quit(&mut self, interactive: bool) {
+        if self.quitting {
+            return;
+        }
+        if interactive {
+            if self.ask_discard(AfterDiscard::Quit) {
+                return;
+            }
+        } else if self.unsaved_editors() {
+            log::warn!("quit from the command line: unsaved Editor Window edits are discarded");
+        }
+        self.quit();
+    }
+
+    /// The History folder in use changed: ids held by open windows belong to the old
+    /// folder's index, and the same id can be another item in the new one. Editor Windows
+    /// keep their picture and save it as a new item; pins keep theirs without item actions;
+    /// toasts with item buttons close.
+    fn forget_history_items(&mut self) {
+        for e in &mut self.editors {
+            e.s.forget_item();
+        }
+        for p in &mut self.pins {
+            p.s.forget_item();
+        }
+        self.toasts.retain(|t| !t.has_item);
+        self.touch();
+    }
+
+    /// Switch to another opened History folder.
+    fn use_history(&mut self, history: Arc<History>) {
+        self.shared.history = history;
+        self.forget_history_items();
+        if let Ok(mut g) = self.bg_cfg.lock() {
+            *g = BgConfig::from(
+                &self.shared.config,
+                self.shared.history.clone(),
+                self.shared.ocr.clone(),
+            );
+        }
+        let _ = self.bg_kick.send(BgKick::Full);
+        self.invalidate_history();
+    }
+
+    /// The outcome of a retry of the unavailable History folder (`history` is None when it
+    /// still cannot be opened): switch back to it once it is there.
+    fn history_folder_retried(&mut self, folder: String, history: Option<Arc<History>>) {
+        self.history_retry_inflight = false;
+        self.history_retry_at = Instant::now() + HISTORY_RETRY_EVERY;
+        // The setting may have changed while the retry ran, and a recording keeps its
+        // files in the folder it started in: the next retry switches.
+        let current = self.history_fallback.as_deref() == Some(folder.as_str())
+            && self.shared.config.history.folder == folder;
+        let Some(history) = history else { return };
+        if !current || self.quitting || !matches!(self.rec, Rec::Idle) || self.exporting {
+            return;
+        }
+        log::info!("the configured history folder is available again; switching to it");
+        self.history_fallback = None;
+        let dir = history.folder().display().to_string();
+        self.use_history(history);
+        self.notify(
+            tr!("shell.history_dir.back"),
+            tr!("shell.history_dir.back.body", dir = dir),
+            false,
+        );
+    }
+
+    /// Windows is ending the session (`on_end_session`): stop a recording now so its file
+    /// is finalized and kept, like Quit does, but stay up in case the shutdown is cancelled.
+    fn end_session_begin(&mut self) {
+        match &self.rec {
+            Rec::Active { .. } => {
+                if let Rec::Active { rec, .. } = std::mem::replace(&mut self.rec, Rec::Idle) {
+                    log::info!("session ending: finishing the recording");
+                    self.record_frame = None;
+                    self.record_hud = None;
+                    // Counted before the hand-over below, so `end_session_wait` sees it.
+                    let in_flight = workers::InFlight::begin();
+                    let env = self.env();
+                    std::thread::spawn(move || {
+                        let _in_flight = in_flight;
+                        match rec.stop() {
+                            Ok(res) => {
+                                // Cut off here, the next start still finds the finished file.
+                                if let Err(e) = workers::keep_raw_recording(&env, &res.path) {
+                                    log::warn!("keeping the recording failed: {e:#}");
+                                }
+                            }
+                            Err(e) => log::warn!("stop at session end failed: {e:#}"),
+                        }
+                    });
+                    self.touch();
+                }
+            }
+            // Not recording yet: do not start under the shutdown.
+            Rec::Countdown(_) | Rec::Starting { .. } => self.record_cancel(),
+            _ => {}
+        }
+        let _ = END_SESSION.compare_exchange(
+            END_REQUESTED,
+            END_HANDLED,
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        );
     }
 
     fn add_pin(&mut self, image: Rgba, title: String, item: Option<ItemId>, at: Option<PxRect>) {
@@ -1387,6 +1696,10 @@ impl Shell {
             }
             Command::CheckForUpdates => self.maybe_check_updates(true),
             Command::InstallUpdate => self.install_update(),
+            Command::Quit => {
+                let forwarded = std::mem::take(&mut self.forwarded_quit);
+                self.request_quit(!forwarded);
+            }
             Command::UpdateNow => {
                 if self.update_release.is_some() {
                     self.install_update();
@@ -1405,7 +1718,6 @@ impl Shell {
                     .unwrap_or_else(|| crate::update::DEFAULT_PAGE.to_string());
                 self.pending.push_back(Command::OpenUrl(url));
             }
-            Command::Quit => self.quit(),
             Command::TrayClick
                 if self
                     .tray_click_quiet_until
@@ -1481,8 +1793,36 @@ impl Shell {
         let Some(mode) = self.queued_annotate.take() else {
             return;
         };
-        if let Some((frozen, windows)) = self.freeze() {
-            self.open_overlay(mode, frozen, windows);
+        self.open_annotate(mode);
+    }
+
+    /// Open a finished capture for annotating: over the frozen screen, or in an Editor
+    /// Window when the screen cannot be frozen right now. The capture itself is fine and
+    /// must not be dropped over that.
+    fn open_annotate(&mut self, mode: OverlayMode) {
+        match self.freeze_quiet(false) {
+            Ok((frozen, windows)) => self.open_overlay(mode, frozen, windows),
+            Err(e) => {
+                log::warn!("freeze for the editor failed, using an Editor Window: {e:#}");
+                if let OverlayMode::Annotate {
+                    base,
+                    doc,
+                    mode,
+                    editing,
+                    source,
+                } = mode
+                {
+                    self.open_editor(crate::state::EditorRequest {
+                        base,
+                        doc,
+                        mode,
+                        editing,
+                        source,
+                        name: None,
+                        rect: None,
+                    });
+                }
+            }
         }
     }
 
@@ -1496,12 +1836,27 @@ impl Shell {
         &mut self,
         editor: bool,
     ) -> Option<(Frozen, Vec<stinkshot_platform::windows_enum::WinInfo>)> {
+        match self.freeze_quiet(editor) {
+            Ok(f) => Some(f),
+            Err(e) => {
+                let body = report("freeze_all", &e, tr!("shell.capture.no_image.body"));
+                self.notify(tr!("shell.capture.screen_failed"), body, true);
+                None
+            }
+        }
+    }
+
+    /// `freeze_for` without the error toast, for callers with something else to fall back on.
+    fn freeze_quiet(
+        &mut self,
+        editor: bool,
+    ) -> anyhow::Result<(Frozen, Vec<stinkshot_platform::windows_enum::WinInfo>)> {
         if let Some(e) = self.early_freeze.take()
             && e.at.elapsed() < EARLY_FREEZE_MAX_AGE
         {
             timing::point(format_args!("freeze: using the start-up freeze"));
             self.quick_overlay = e.quick.map(|q| (q, Instant::now()));
-            return Some((e.frozen, e.windows));
+            return Ok((e.frozen, e.windows));
         }
         let t0 = Instant::now();
         let windows = windows_enum::visible_windows();
@@ -1512,14 +1867,7 @@ impl Shell {
             (t1 - t0).as_secs_f64() * 1000.0,
             t1.elapsed().as_secs_f64() * 1000.0
         ));
-        match res {
-            Ok(f) => Some((f, windows)),
-            Err(e) => {
-                let body = report("freeze_all", &e, tr!("shell.capture.no_image.body"));
-                self.notify(tr!("shell.capture.screen_failed"), body, true);
-                None
-            }
-        }
+        res.map(|f| (f, windows))
     }
 
     fn open_overlay(
@@ -1863,9 +2211,7 @@ impl Shell {
         self.tray = None;
         // Saves, exports and a recording's stop worker must not be cut off by the exit.
         wait_for_jobs(GPU_RESTART_GRACE);
-        crate::gpu::relaunch();
-        log::logger().flush();
-        std::process::exit(0);
+        exit_after_failure(crate::gpu::relaunch("GPU device loss"));
     }
 
     fn quit(&mut self) {
@@ -1908,6 +2254,14 @@ impl Shell {
                         log::warn!("keeping the recording on quit failed: {e:#}");
                     }
                 });
+            }
+            // A recording that has not begun must not begin under the exit.
+            Rec::Countdown(_) => self.countdown = None,
+            Rec::Starting { pending, .. } => {
+                self.rec = Rec::Starting {
+                    pending,
+                    cancel: true,
+                }
             }
             other => self.rec = other,
         }
@@ -2112,11 +2466,10 @@ impl Shell {
                 self.touch();
             }
             Rec::Trim { source, .. } => {
-                // The Trim window's Discard: drop the raw recording.
-                if let Err(e) = std::fs::remove_file(&source) {
-                    log::warn!("discard {}: {e}", source.display());
-                }
+                // The Trim window's Discard: drop the raw recording. The window goes first so
+                // its preview readers start letting go of the file.
                 self.trim = None;
+                workers::remove_recording(&source);
                 self.touch();
             }
             other => self.rec = other,
@@ -2135,11 +2488,9 @@ impl Shell {
         let source = source.clone();
         *done_issued = true;
         if !as_gif && !as_mp4 {
-            if let Err(e) = std::fs::remove_file(&source) {
-                log::warn!("discard {}: {e}", source.display());
-            }
             self.rec = Rec::Idle;
             self.trim = None;
+            workers::remove_recording(&source);
             self.touch();
             return;
         }
@@ -2202,10 +2553,13 @@ impl Shell {
         // Live recorder: status, toggles.
         let mut stop_with_error: Option<String> = None;
         let mut mic_failed: Option<String> = None;
+        let mut disk_low = false;
         if let Rec::Active { rec, .. } = &mut self.rec {
             let status = rec.status();
             if let Some(err) = status.error.clone() {
                 stop_with_error = Some(err);
+            } else {
+                disk_low = rec.low_disk();
             }
             if let Some(hud) = &mut self.record_hud {
                 hud.s.update_status(status);
@@ -2239,6 +2593,16 @@ impl Shell {
                 tr!("shell.record.problem.tail"),
             );
             self.notify(tr!("shell.record.problem"), body, true);
+            self.record_stop();
+        }
+        // Stop while there is still room to finish the file.
+        if disk_low {
+            log::warn!("recording stopped: the output disk is almost full");
+            self.notify(
+                tr!("shell.record.disk_low"),
+                tr!("shell.record.disk_low.body"),
+                true,
+            );
             self.record_stop();
         }
         // Trim window closed without a choice: keep the untrimmed recording.
@@ -2402,8 +2766,8 @@ impl Shell {
                         };
                         if self.overlay.is_some() || self.busy_with_recording() {
                             self.queued_annotate = Some(mode);
-                        } else if let Some((frozen, windows)) = self.freeze() {
-                            self.open_overlay(mode, frozen, windows);
+                        } else {
+                            self.open_annotate(mode);
                         }
                     }
                     Err(e) => {
@@ -2460,6 +2824,18 @@ impl Shell {
             }
             WorkerMsg::UpdateDownloaded(result) => self.update_downloaded(result),
             WorkerMsg::InstallerExited(code) => self.installer_exited(code),
+            WorkerMsg::HistoryFolderRetried { folder, history } => {
+                self.history_folder_retried(folder, history)
+            }
+            WorkerMsg::DiscardAnswer { then, yes } => {
+                self.discard_asking = false;
+                if yes {
+                    match then {
+                        AfterDiscard::Quit => self.quit(),
+                        AfterDiscard::InstallUpdate => self.install_update_confirmed(true),
+                    }
+                }
+            }
         }
     }
 
@@ -2588,12 +2964,12 @@ impl Shell {
         });
     }
 
-    fn capture_saved(&mut self, s: workers::CaptureSaved) {
+    fn capture_saved(&mut self, mut s: workers::CaptureSaved) {
         if let Some(t) = &mut self.tray {
             t.flash_capture();
         }
         if s.action == FinishAction::Pin
-            && let Some(img) = s.pin_image
+            && let Some(img) = s.pin_image.take()
         {
             let title = s
                 .path
@@ -2619,24 +2995,8 @@ impl Shell {
         } else if s.action == FinishAction::CopyText {
             return; // the worker already explained why nothing was copied
         } else {
-            let title = if let Some(p) = &s.saved_as {
-                tr!(
-                    "shell.saved.as",
-                    name = p
-                        .file_name()
-                        .map(|n| n.to_string_lossy().into_owned())
-                        .unwrap_or_default()
-                )
-            } else if s.action == FinishAction::SaveCopy && s.item.is_some() {
-                tr!("shell.saved.copy").to_string()
-            } else if s.editing {
-                tr!("shell.saved.updated").to_string()
-            } else if s.action == FinishAction::Pin {
-                tr!("shell.saved.pinned").to_string()
-            } else if s.copied_image {
-                tr!("shell.saved.copied").to_string()
-            } else {
-                tr!("shell.saved.history").to_string()
+            let Some(title) = capture_title(&s) else {
+                return; // nothing was kept; the worker's error toast says so
             };
             (
                 title,
@@ -2759,6 +3119,8 @@ impl Shell {
         };
         self.shared.config.general.last_version = current.to_string();
         self.shared.config_dirty = true;
+        // The setup.exe that installed this version is still in %TEMP%.
+        workers::remove_update_download();
         if updated && self.shared.config.general.show_toast {
             self.push_toast(ToastKind::Updated {
                 title: tr!("shell.update.updated", v = current).to_string(),
@@ -2770,6 +3132,12 @@ impl Shell {
     /// Update Now: download, verify and run the installer, or open the release page when
     /// this copy cannot update itself (portable, dev build, no installer listed).
     fn install_update(&mut self) {
+        self.install_update_confirmed(false);
+    }
+
+    /// `install_update`; `discard_ok`: the user already agreed to lose unsaved Editor
+    /// Window edits (the installer closes this copy without asking).
+    fn install_update_confirmed(&mut self, discard_ok: bool) {
         let Some(r) = self.update_release.clone() else {
             return;
         };
@@ -2783,6 +3151,9 @@ impl Shell {
                 return;
             }
         };
+        if !discard_ok && self.ask_discard(AfterDiscard::InstallUpdate) {
+            return;
+        }
         log::info!("update: downloading {} ({} bytes)", inst.name, inst.size);
         self.update_installing = true;
         self.shared.update = crate::state::UpdateState::Downloading {
@@ -2803,7 +3174,10 @@ impl Shell {
             return;
         };
         let started = result.and_then(|path| {
-            crate::update::run_installer(&path)
+            let Some(inst) = r.installer.as_ref() else {
+                return Err("the release lists no installer".to_string());
+            };
+            crate::update::run_installer(&path, inst)
                 .map(|child| {
                     workers::watch_installer(self.worker_tx.clone(), child);
                     path
@@ -2911,6 +3285,9 @@ impl Shell {
             match History::open(&dir) {
                 Ok(h) => {
                     self.shared.history = Arc::new(h);
+                    // The user picked a folder that opens: no stand-in any more.
+                    self.history_fallback = None;
+                    self.forget_history_items();
                     let _ = self.bg_kick.send(BgKick::Full);
                     self.invalidate_history();
                 }
@@ -2984,6 +3361,13 @@ impl Shell {
 
     fn poll_inputs(&mut self) {
         let recording = matches!(self.rec, Rec::Active { .. });
+        RECORDING_LIVE.store(
+            matches!(
+                self.rec,
+                Rec::Starting { .. } | Rec::Active { .. } | Rec::Stopping(_)
+            ),
+            Ordering::SeqCst,
+        );
         if let Some(t) = &mut self.tray {
             t.set_recording(recording);
             self.pending.extend(t.poll());
@@ -2992,10 +3376,7 @@ impl Shell {
         self.tick_hotkeys(false);
         while let Ok(args) = self.ipc_rx.try_recv() {
             timing::point(format_args!("ipc: command taken by the shell"));
-            match cli::command_from_args(&args) {
-                Some(cmd) => self.pending.push_back(cmd),
-                None => log::debug!("ignored forwarded args {args:?}"),
-            }
+            self.queue_forwarded(&args);
         }
         while let Ok(msg) = self.worker_rx.try_recv() {
             self.handle_worker_msg(msg);
@@ -3040,11 +3421,24 @@ impl Shell {
     }
 
     fn housekeeping(&mut self) {
-        if self.last_theme_check.elapsed() >= Duration::from_secs(3)
-            && self.shared.config.general.theme == "system"
-        {
+        // Every few seconds, not every frame: it reads the registry and, for the Windows
+        // accent, activates a WinRT object. Also with a fixed theme: the accent, the contrast
+        // theme and the text size can still follow Windows.
+        if self.last_theme_check.elapsed() >= Duration::from_secs(3) {
             self.last_theme_check = Instant::now();
             self.refresh_theme(false);
+        }
+        if let Some(folder) = &self.history_fallback
+            && !self.history_retry_inflight
+            && Instant::now() >= self.history_retry_at
+            && !self.quitting
+        {
+            self.history_retry_inflight = true;
+            workers::retry_history_folder(
+                self.worker_tx.clone(),
+                folder.clone(),
+                self.shared.config.history_folder(),
+            );
         }
         if self.last_housekeeping.elapsed() >= Duration::from_secs(3600) {
             self.last_housekeeping = Instant::now();
@@ -3241,7 +3635,9 @@ impl eframe::App for Shell {
         if ctx.input(|i| i.viewport().close_requested()) && !self.quitting {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
         }
-        self.refresh_theme(false);
+        if END_SESSION.load(Ordering::SeqCst) == END_REQUESTED {
+            self.end_session_begin();
+        }
         self.poll_inputs();
         self.process_pending();
         self.tick_recording();
@@ -3313,6 +3709,44 @@ mod tests {
         assert!(mp4.contains(&format!("{} FPS", rc.fps)));
         // The rate in use, not the setting, when 120 FPS fell back to 60.
         assert!(record_summary(&rc, false, 60).contains("60 FPS"));
+    }
+
+    fn saved(item: Option<ItemId>, path: Option<&str>, copied: bool) -> workers::CaptureSaved {
+        workers::CaptureSaved {
+            item,
+            path: path.map(PathBuf::from),
+            saved_as: None,
+            width: 10,
+            height: 10,
+            thumb: Rgba::new(1, 1),
+            copied_image: copied,
+            copied_text: None,
+            mode: "region",
+            source: SourceInfo::default(),
+            action: FinishAction::Quick,
+            rect: PxRect::new(0, 0, 10, 10),
+            pin_image: None,
+            editing: false,
+        }
+    }
+
+    #[test]
+    fn saved_to_history_is_only_claimed_when_it_was() {
+        let history = tr!("shell.saved.history");
+        assert_eq!(
+            capture_title(&saved(Some(1), Some("C:\\h\\a.png"), false)).as_deref(),
+            Some(history)
+        );
+        // History failed, the default folder took it.
+        let elsewhere = capture_title(&saved(None, Some("C:\\d\\a.png"), false)).unwrap();
+        assert_ne!(elsewhere, history);
+        // History failed, only the clipboard has it.
+        assert_eq!(
+            capture_title(&saved(None, None, true)).as_deref(),
+            Some(tr!("shell.saved.copied"))
+        );
+        // Nothing kept: no "saved" toast at all.
+        assert_eq!(capture_title(&saved(None, None, false)), None);
     }
 
     #[test]

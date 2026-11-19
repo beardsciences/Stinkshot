@@ -34,6 +34,11 @@ const FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(5);
 /// How long a recording waits for its display to come back after a display change.
 const DISPLAY_RETRY_FOR: Duration = Duration::from_secs(10);
 const DISPLAY_RETRY_EVERY: Duration = Duration::from_millis(500);
+/// Free space below which a recording is stopped: finalizing still has to write the index.
+const DISK_RESERVE_BYTES: u64 = 300 * 1024 * 1024;
+const DISK_CHECK_EVERY: Duration = Duration::from_secs(3);
+/// Most audio handed to the encoder in one sample (one second of output frames).
+const MAX_AUDIO_WRITE_FRAMES: usize = OUT_RATE as usize;
 
 struct Shared {
     stop: AtomicBool,
@@ -46,6 +51,8 @@ struct Shared {
     keys: AtomicBool,
     frames: AtomicU64,
     dropped: AtomicU64,
+    /// The output volume is nearly full (see `DISK_RESERVE_BYTES`).
+    low_disk: AtomicBool,
     error: Mutex<Option<String>>,
     timeline: Mutex<Timeline>,
     /// Microphone switched on mid-recording (`Recorder::start_mic`); the mixer picks it up.
@@ -55,8 +62,22 @@ struct Shared {
 impl Shared {
     fn set_error(&self, msg: String) {
         log::error!("recording error: {msg}");
-        if let Ok(mut e) = self.error.lock() {
-            e.get_or_insert(msg);
+        // A panicking worker may have poisoned the lock; the message still has to land.
+        self.error
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get_or_insert(msg);
+    }
+
+    /// Feed the clock-gap detection (`Timeline::observe`) from a worker loop.
+    fn observe_clock(&self, now: Instant) {
+        if let Ok(mut t) = self.timeline.lock()
+            && let Some(gap) = t.observe(now)
+        {
+            log::warn!(
+                "recording clock jumped {:.1} s (sleep or a stall); left out of the recording",
+                gap.as_secs_f64()
+            );
         }
     }
 
@@ -137,6 +158,7 @@ impl Recorder {
             keys: AtomicBool::new(opts.show_keys),
             frames: AtomicU64::new(0),
             dropped: AtomicU64::new(0),
+            low_disk: AtomicBool::new(false),
             error: Mutex::new(None),
             timeline: Mutex::new(Timeline::new(Instant::now())),
             late_mic: Mutex::new(None),
@@ -193,16 +215,23 @@ impl Recorder {
             std::thread::Builder::new()
                 .name("record-video".into())
                 .spawn(move || {
-                    video_thread(
-                        shared,
-                        opts,
-                        region,
-                        fps,
-                        temp,
-                        want_audio,
-                        webcam_latest,
-                        init_tx,
-                    );
+                    // A panic here would otherwise end the thread silently and leave the
+                    // recording running with no picture; reported, the shell stops it.
+                    let run = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                        video_thread(
+                            shared.clone(),
+                            opts,
+                            region,
+                            fps,
+                            temp,
+                            want_audio,
+                            webcam_latest,
+                            init_tx,
+                        );
+                    }));
+                    if let Err(p) = run {
+                        shared.set_error(format!("video thread panicked: {}", panic_text(&*p)));
+                    }
                 })
                 .context("spawn video thread")?
         });
@@ -221,7 +250,14 @@ impl Recorder {
             Some(
                 std::thread::Builder::new()
                     .name("record-audio-mix".into())
-                    .spawn(move || mixer_thread(shared, enc, sys_q, mic_q))
+                    .spawn(move || {
+                        let run = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                            mixer_thread(shared.clone(), enc, sys_q, mic_q)
+                        }));
+                        if let Err(p) = run {
+                            shared.set_error(format!("audio mixer panicked: {}", panic_text(&*p)));
+                        }
+                    })
                     .context("spawn mixer thread")?,
             )
         } else {
@@ -325,6 +361,12 @@ impl Recorder {
         Ok(())
     }
 
+    /// The output volume is nearly full; the caller should stop the recording now, while
+    /// there is still room to finalize the file.
+    pub fn low_disk(&self) -> bool {
+        self.shared.low_disk.load(Ordering::Relaxed)
+    }
+
     pub fn set_mic_muted(&self, muted: bool) {
         self.shared.mic_muted.store(muted, Ordering::Relaxed);
     }
@@ -346,6 +388,7 @@ impl Recorder {
         if self.final_elapsed.is_none() {
             // Freeze the timeline so every worker agrees on the final duration.
             let now = Instant::now();
+            self.shared.observe_clock(now);
             if let Ok(mut t) = self.shared.timeline.lock() {
                 let e = t.elapsed_at(now);
                 t.pause(now);
@@ -372,10 +415,12 @@ impl Recorder {
         self.finished = true;
         let frames = self.shared.frames.load(Ordering::Relaxed);
         let err = self.shared.error.lock().ok().and_then(|e| e.clone());
+        // A worker that panicked while writing poisons the lock; what was written is still
+        // worth finalizing.
         let fin = self
             .enc
             .lock()
-            .map_err(|_| anyhow!("encoder lock poisoned"))?
+            .unwrap_or_else(|p| p.into_inner())
             .finalize();
         if frames == 0 {
             let _ = std::fs::remove_file(&self.temp_path);
@@ -384,7 +429,12 @@ impl Recorder {
             ));
         }
         if let Err(e) = fin {
-            let _ = std::fs::remove_file(&self.temp_path);
+            // Kept: without its index the file does not play, but the data is all there for
+            // a repair tool, and deleting it would make a full disk cost the whole recording.
+            log::error!(
+                "recording not finalized; the unfinished file is kept at {}",
+                self.temp_path.display()
+            );
             return Err(e.context(format!(
                 "could not finalize the recording{}",
                 err.map(|m| format!(" ({m})")).unwrap_or_default()
@@ -415,9 +465,11 @@ impl Recorder {
     fn abort(&mut self) {
         self.teardown();
         self.finished = true;
-        if let Ok(e) = self.enc.lock() {
-            let _ = e.finalize();
-        }
+        let _ = self
+            .enc
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .finalize();
         let _ = std::fs::remove_file(&self.temp_path);
     }
 }
@@ -592,13 +644,69 @@ fn video_thread(
         return;
     }
 
-    if let Err(e) = video_loop(&shared, &opts, region, fps, &mut cap, &enc, &webcam_latest) {
+    // Until this thread exits: no idle sleep or display-off in the middle of a recording.
+    let _awake = KeepAwake::new();
+    let out_dir = temp.parent().unwrap_or(Path::new("."));
+    if let Err(e) = video_loop(
+        &shared,
+        &opts,
+        region,
+        fps,
+        &mut cap,
+        &enc,
+        &webcam_latest,
+        out_dir,
+    ) {
         shared.set_error(format!("{e:#}"));
     }
     drop(cap);
     drop(session);
 }
 
+/// Holds the system and the display awake for the calling thread's lifetime. The request
+/// belongs to the thread that made it, so it is made and cleared on the video thread.
+struct KeepAwake;
+
+impl KeepAwake {
+    fn new() -> Self {
+        use windows::Win32::System::Power::{
+            ES_CONTINUOUS, ES_DISPLAY_REQUIRED, ES_SYSTEM_REQUIRED, SetThreadExecutionState,
+        };
+        unsafe {
+            SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED);
+        }
+        KeepAwake
+    }
+}
+
+impl Drop for KeepAwake {
+    fn drop(&mut self) {
+        use windows::Win32::System::Power::{ES_CONTINUOUS, SetThreadExecutionState};
+        unsafe {
+            SetThreadExecutionState(ES_CONTINUOUS);
+        }
+    }
+}
+
+/// Bytes the current user may still write on the volume holding `dir`.
+fn free_space(dir: &Path) -> Option<u64> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+    let wide: Vec<u16> = dir.as_os_str().encode_wide().chain(Some(0)).collect();
+    let mut free = 0u64;
+    unsafe {
+        GetDiskFreeSpaceExW(
+            windows::core::PCWSTR(wide.as_ptr()),
+            Some(&mut free),
+            None,
+            None,
+        )
+        .ok()?;
+    }
+    Some(free)
+}
+
+#[allow(clippy::too_many_arguments)]
 fn video_loop(
     shared: &Arc<Shared>,
     opts: &RecordOptions,
@@ -607,6 +715,7 @@ fn video_loop(
     cap: &mut Capturer,
     enc: &Arc<Mutex<Encoder>>,
     webcam_latest: &Arc<Mutex<Option<WebcamFrame>>>,
+    out_dir: &Path,
 ) -> Result<()> {
     let (w, h) = (region.w as usize, region.h as usize);
     let mut sched = FrameScheduler::new(fps);
@@ -630,9 +739,24 @@ fn video_loop(
     let webcam_enabled = opts.webcam.clone();
     let mut start_wall = Instant::now();
     let mut was_paused = false;
+    let mut disk_checked = Instant::now();
 
     while !shared.stop.load(Ordering::Relaxed) {
         let now = Instant::now();
+        shared.observe_clock(now);
+        if now.duration_since(disk_checked) >= DISK_CHECK_EVERY {
+            disk_checked = now;
+            // An unreadable volume (None) is left to the write errors.
+            if let Some(free) = free_space(out_dir)
+                && free < DISK_RESERVE_BYTES
+                && !shared.low_disk.swap(true, Ordering::Relaxed)
+            {
+                log::warn!(
+                    "recording: only {} MB free on the output volume",
+                    free >> 20
+                );
+            }
+        }
         let clicks = shared.clicks.load(Ordering::Relaxed);
         let keys = shared.keys.load(Ordering::Relaxed);
 
@@ -734,7 +858,13 @@ fn video_loop(
                     show_webcam && webcam_latest.lock().map(|g| g.is_some()).unwrap_or(false);
                 let cursor_live = cap.needs_cursor_overlay();
                 if stage_dirty || overlay_live || webcam_live || cursor_live || !have_picture {
-                    let mapped = cap.map()?;
+                    let mapped = match cap.map() {
+                        Ok(m) => m,
+                        // The capture device is gone: the next poll reports it too and
+                        // takes the restart path above. These frames are skipped.
+                        Err(e) if e.is::<DisplayLost>() => continue,
+                        Err(e) => return Err(e),
+                    };
                     if overlay_live || webcam_live || cursor_live {
                         let dst = pixmap.data_mut();
                         let src = mapped.bytes(h);
@@ -752,7 +882,7 @@ fn video_loop(
                             && let Some(frame) = g.as_ref()
                         {
                             let s = ui_scale(h as u32);
-                            let d = wc.diameter.clamp(32, (w.min(h)) as u32);
+                            let d = bubble_diameter(wc.diameter, w, h);
                             let (x, y) = webcam_origin(
                                 wc.corner,
                                 d as i32,
@@ -814,12 +944,30 @@ fn reopen_capturer(
     let deadline = Instant::now() + DISPLAY_RETRY_FOR;
     while Instant::now() < deadline && !shared.stop.load(Ordering::Relaxed) {
         std::thread::sleep(DISPLAY_RETRY_EVERY);
-        match Capturer::new(region, include_cursor, fps) {
+        // Waiting here is recording time (held picture), not a clock gap.
+        shared.observe_clock(Instant::now());
+        let new = Capturer::new(region, include_cursor, fps);
+        shared.observe_clock(Instant::now());
+        match new {
             Ok(c) => return Some(c),
             Err(e) => log::debug!("recording: screen capture not back yet: {e:#}"),
         }
     }
     None
+}
+
+/// Webcam bubble diameter: at least 32 px, but never larger than the picture. Not `clamp`:
+/// that panics when the picture is under 32 px (min above max).
+fn bubble_diameter(wanted: u32, w: usize, h: usize) -> u32 {
+    wanted.max(32).min(w.min(h) as u32)
+}
+
+/// Text of a caught panic, for the log and the shared error.
+fn panic_text(p: &(dyn std::any::Any + Send)) -> &str {
+    p.downcast_ref::<&str>()
+        .copied()
+        .or_else(|| p.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("unknown panic")
 }
 
 fn map_button(b: MouseButton) -> Button {
@@ -857,8 +1005,10 @@ fn mixer_thread(
             None
         };
         let mic_now = mic_q.clone().or(late);
+        let now = Instant::now();
+        shared.observe_clock(now);
         let (elapsed, paused) = match shared.timeline.lock() {
-            Ok(t) => (t.elapsed_at(Instant::now()), t.is_paused()),
+            Ok(t) => (t.elapsed_at(now), t.is_paused()),
             Err(_) => return,
         };
         if paused && !stopping {
@@ -870,51 +1020,86 @@ fn mixer_thread(
             }
         } else {
             let target = (elapsed.as_secs_f64() * OUT_RATE as f64) as u64;
-            let required = target.saturating_sub(emitted) as usize;
+            let mut required = target.saturating_sub(emitted);
             if required >= 960 || (stopping && required > 0) {
-                let pull =
-                    |q: &Option<Arc<Mutex<SourceQueue>>>, muted: bool, out: &mut Vec<f32>| {
-                        out.clear();
-                        if let Some(q) = q
-                            && let Ok(mut q) = q.lock()
-                        {
-                            q.pull(required, MAX_AUDIO_LEAD_FRAMES, out);
-                            if muted {
-                                out.iter_mut().for_each(|s| *s = 0.0);
+                // One second per sample at most: a clock jump must not turn into one
+                // enormous buffer (or overflow the sample's 32-bit byte length).
+                while required > 0 {
+                    let n = required.min(MAX_AUDIO_WRITE_FRAMES as u64) as usize;
+                    let pull =
+                        |q: &Option<Arc<Mutex<SourceQueue>>>, muted: bool, out: &mut Vec<f32>| {
+                            out.clear();
+                            if let Some(q) = q
+                                && let Ok(mut q) = q.lock()
+                            {
+                                q.pull(n, MAX_AUDIO_LEAD_FRAMES, out);
+                                if muted {
+                                    out.iter_mut().for_each(|s| *s = 0.0);
+                                }
                             }
-                        }
+                        };
+                    pull(
+                        &sys_q,
+                        shared.sys_muted.load(Ordering::Relaxed),
+                        &mut buf_sys,
+                    );
+                    pull(
+                        &mic_now,
+                        shared.mic_muted.load(Ordering::Relaxed),
+                        &mut buf_mic,
+                    );
+                    mixed.clear();
+                    mixed.resize(n * 2, 0.0);
+                    mix(&mut mixed, &[&buf_sys, &buf_mic]);
+                    pcm.clear();
+                    to_pcm16(&mixed, &mut pcm);
+                    let pts = (emitted as u128 * 10_000_000 / OUT_RATE as u128) as i64;
+                    let dur = (n as u128 * 10_000_000 / OUT_RATE as u128) as i64;
+                    let res = match enc.lock() {
+                        Ok(e) => e.write_audio(&pcm, pts, dur),
+                        Err(_) => return,
                     };
-                pull(
-                    &sys_q,
-                    shared.sys_muted.load(Ordering::Relaxed),
-                    &mut buf_sys,
-                );
-                pull(
-                    &mic_now,
-                    shared.mic_muted.load(Ordering::Relaxed),
-                    &mut buf_mic,
-                );
-                mixed.clear();
-                mixed.resize(required * 2, 0.0);
-                mix(&mut mixed, &[&buf_sys, &buf_mic]);
-                pcm.clear();
-                to_pcm16(&mixed, &mut pcm);
-                let pts = (emitted as u128 * 10_000_000 / OUT_RATE as u128) as i64;
-                let dur = (required as u128 * 10_000_000 / OUT_RATE as u128) as i64;
-                let res = match enc.lock() {
-                    Ok(e) => e.write_audio(&pcm, pts, dur),
-                    Err(_) => return,
-                };
-                if let Err(e) = res {
-                    shared.set_error(format!("audio write failed: {e:#}"));
-                    return;
+                    if let Err(e) = res {
+                        shared.set_error(format!("audio write failed: {e:#}"));
+                        return;
+                    }
+                    emitted += n as u64;
+                    required -= n as u64;
                 }
-                emitted += required as u64;
             }
         }
         if stopping {
             break;
         }
         std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bubble_diameter_never_panics_on_a_tiny_picture() {
+        assert_eq!(bubble_diameter(200, 1920, 1080), 200);
+        assert_eq!(bubble_diameter(10, 1920, 1080), 32);
+        assert_eq!(bubble_diameter(5000, 1920, 1080), 1080);
+        // Under 32 px the picture wins (this used to panic in `clamp`).
+        assert_eq!(bubble_diameter(200, 640, 20), 20);
+        assert_eq!(bubble_diameter(0, 2, 2), 2);
+    }
+
+    #[test]
+    fn panic_text_reads_both_payload_kinds() {
+        let a = std::panic::catch_unwind(|| panic!("plain")).unwrap_err();
+        assert_eq!(panic_text(&*a), "plain");
+        let n = 3;
+        let b = std::panic::catch_unwind(|| panic!("formatted {n}")).unwrap_err();
+        assert_eq!(panic_text(&*b), "formatted 3");
+    }
+
+    #[test]
+    fn free_space_reads_the_temp_volume() {
+        assert!(free_space(&std::env::temp_dir()).is_some_and(|b| b > 0));
     }
 }

@@ -143,7 +143,8 @@ impl Overlay {
         self.beautify_open = false;
         let base = self.ensure_base();
         let (tx, rx) = channel();
-        let (img, ctx2, engine) = (base.clone(), ctx.clone(), shared.ocr.clone());
+        // Read what the picture shows, pasted pictures included.
+        let (img, ctx2, engine) = (self.content_image(), ctx.clone(), shared.ocr.clone());
         let spawned = std::thread::Builder::new()
             .name("scan-codes".into())
             .spawn(move || {

@@ -44,14 +44,17 @@ impl<'de> Deserialize<'de> for CursorImage {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let s = String::deserialize(d)?;
         let bytes = b64_decode(&s).ok_or_else(|| serde::de::Error::custom("bad base64"))?;
-        let img = Rgba::decode(&bytes).map_err(serde::de::Error::custom)?;
-        if img.width == 0
-            || img.height == 0
-            || img.width > MAX_PICTURE_SIDE
-            || img.height > MAX_PICTURE_SIDE
-        {
+        // The size the header declares, before any pixel is decoded: a damaged or crafted
+        // sidecar must not get a huge picture allocated first and refused afterwards.
+        let (w, h) = ::image::ImageReader::new(std::io::Cursor::new(&bytes))
+            .with_guessed_format()
+            .map_err(serde::de::Error::custom)?
+            .into_dimensions()
+            .map_err(serde::de::Error::custom)?;
+        if w == 0 || h == 0 || w > MAX_PICTURE_SIDE || h > MAX_PICTURE_SIDE {
             return Err(serde::de::Error::custom("bad stored image size"));
         }
+        let img = Rgba::decode(&bytes).map_err(serde::de::Error::custom)?;
         Ok(Self::new(img))
     }
 }

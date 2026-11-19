@@ -22,6 +22,12 @@ pub enum ShapeOpt {
     ToBox,
 }
 
+/// Does a new region open the Editor Window at once? Only with Open Editor Window Right
+/// Away, and not for the starting box of a keyboard selection, which waits for Enter.
+fn opens_right_away(after: stinkshot_core::config::AfterRegion, keyboard: bool) -> bool {
+    after == stinkshot_core::config::AfterRegion::Instant && !keyboard
+}
+
 impl Overlay {
     pub(super) fn set_tool(&mut self, t: Tool) {
         self.commit_text();
@@ -215,6 +221,8 @@ impl Overlay {
         let off = shapes::paste_offset(group, (k, k), w, h);
         let pre = self.doc.clone();
         let ids = shapes::add_copies(&mut self.doc, &src, off);
+        // A copied cover text sits on other pixels than its original.
+        self.resample_covers(&ids);
         self.undo.push(&pre);
         self.selected = ids;
         if self.tool != Tool::Select {
@@ -235,6 +243,10 @@ impl Overlay {
         if self.clipboard.is_empty() {
             return;
         }
+        // Several regions become one picture first, as for a drawing tool: combining
+        // later starts a new document and would drop what was pasted (`paste_image` does
+        // the same).
+        self.combine_regions();
         self.pastes += 1;
         self.add_offset_copies(self.clipboard.clone(), self.pastes, ppp);
     }
@@ -246,6 +258,12 @@ impl Overlay {
         if img.width == 0 || img.height == 0 || img.width > max || img.height > max {
             return;
         }
+        // Settle what is in progress first: an empty text being typed is removed by
+        // restoring the document from before it, and a gesture holds a snapshot too;
+        // either would take the new picture with it.
+        self.abort_drag();
+        self.commit_text();
+        self.combine_regions();
         let (w, h) = self.image_size();
         let (iw, ih) = (img.width as f32, img.height as f32);
         let k = (w * 0.8 / iw).min(h * 0.8 / ih).min(1.0);
@@ -435,13 +453,27 @@ impl Overlay {
             else {
                 return;
             };
-            let base = self.ensure_base();
-            Some(shapes::cover_colors(&base, r))
+            let img = self.content_image();
+            Some(shapes::cover_colors(&img, r))
         } else {
             None
         };
         if let Some(s) = self.doc.get_mut(id) {
             shapes::set_cover(s, colors);
+        }
+    }
+
+    /// Sample the colors again for the cover texts among `ids` (they moved, or are new
+    /// copies somewhere else).
+    pub(super) fn resample_covers(&mut self, ids: &[ShapeId]) {
+        for id in ids {
+            let cover = self
+                .doc
+                .get(*id)
+                .is_some_and(|s| matches!(s.kind, ShapeKind::Text { cover: true, .. }));
+            if cover {
+                self.set_cover_on(*id, true);
+            }
         }
     }
 
@@ -546,6 +578,12 @@ impl Overlay {
     // ---------------------------------------------------------------- accepting / finishing
 
     pub(super) fn accept_region(&mut self, r: PxRect, shared: &mut Shared) {
+        self.accept_region_from(r, shared, false);
+    }
+
+    /// `keyboard`: the region is the starting box of a keyboard-only selection (arrow
+    /// keys with nothing selected), which is still to be moved and sized.
+    pub(super) fn accept_region_from(&mut self, r: PxRect, shared: &mut Shared, keyboard: bool) {
         let r = selection::clamp_rect(r, self.local_bounds());
         if let Kind::Select(purpose) = self.kind {
             self.finish_region(shared, purpose, r);
@@ -557,8 +595,9 @@ impl Overlay {
         self.set_tool(Tool::Select);
         self.drag = Drag::None;
         // Open Editor Window Right Away: unfreeze as soon as the region exists (a region
-        // added with Shift waits for Enter, so several can be combined first).
-        if self.after_region == stinkshot_core::config::AfterRegion::Instant
+        // added with Shift waits for Enter, so several can be combined first, and so does
+        // one started with the arrow keys, which is only a starting box).
+        if opens_right_away(self.after_region, keyboard)
             && matches!(self.kind, Kind::Capture)
             && !self.windowed
             && !adding
@@ -946,5 +985,19 @@ impl Overlay {
                 UiAction::Picker(a) => self.apply_picker_action(shared, a),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use stinkshot_core::config::AfterRegion;
+
+    #[test]
+    fn keyboard_started_region_waits_for_enter() {
+        assert!(opens_right_away(AfterRegion::Instant, false));
+        assert!(!opens_right_away(AfterRegion::Instant, true));
+        assert!(!opens_right_away(AfterRegion::Window, false));
+        assert!(!opens_right_away(AfterRegion::Annotate, false));
     }
 }

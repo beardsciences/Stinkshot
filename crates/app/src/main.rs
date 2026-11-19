@@ -45,5 +45,19 @@ mod wake;
 mod workers;
 
 fn main() -> anyhow::Result<()> {
+    restrict_dll_search();
     shell::run()
+}
+
+/// DLLs loaded by bare name (wgpu loads `d3dcompiler_47.dll` that way) come from System32
+/// only, never from the folder the portable exe was unpacked into, where another program
+/// could have planted one. Stinkshot ships no DLLs of its own. The DLLs the exe imports
+/// directly are covered by the linker flag in `build.rs`.
+fn restrict_dll_search() {
+    use windows::Win32::System::LibraryLoader::{
+        LOAD_LIBRARY_SEARCH_SYSTEM32, SetDefaultDllDirectories,
+    };
+    // SAFETY: a process-wide setting made before any other thread exists; no pointers.
+    // The logger is not up yet, and a failure only leaves the default search order.
+    let _ = unsafe { SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32) };
 }

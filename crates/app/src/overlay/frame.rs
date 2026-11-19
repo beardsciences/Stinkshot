@@ -54,6 +54,10 @@ impl Overlay {
             self.poll_finish(ctx, shared);
         } else {
             self.place_pending_cursor();
+            // Pictures that arrived during a save (`add_picture`).
+            for img in std::mem::take(&mut self.pending_pictures) {
+                self.paste_image(img);
+            }
             let inp = self.read_input(ctx, ppp);
             if inp.pressed {
                 self.forget_cursor_auto();
@@ -62,14 +66,24 @@ impl Overlay {
             // Typing owns the keyboard; Esc that ends typing must not also deselect.
             let was_editing = self.edit.is_some();
             // The Exact size field owns the keyboard while it is open.
-            if !self.exact_open {
-                self.text_keys(ctx);
-            }
-            if !was_editing {
+            let finish_chord = !self.exact_open && self.text_keys(ctx);
+            if ctx.egui_wants_keyboard_input() {
+                // A focused egui field (the Beautify numbers) gets the keys: its digits,
+                // Backspace and Enter are not editor shortcuts. Esc still backs out.
+                if keys.esc && !was_editing {
+                    self.handle_keys(ctx, shared, &keys.only_esc(), &inp);
+                }
+            } else if !was_editing {
                 self.handle_keys(ctx, shared, &keys, &inp);
+            } else if finish_chord {
+                self.handle_keys(ctx, shared, &keys.only_finish(), &inp);
             }
             if !self.closed {
                 self.handle_pointer(ctx, shared, &inp);
+            }
+            // The eyedropper's loupe and readout include the pasted pictures.
+            if self.picking && self.has_pictures() {
+                self.content_image();
             }
             self.update_render();
         }
@@ -243,21 +257,23 @@ impl Overlay {
 
     /// Keyboard while typing on the image: characters (IME compositions too), caret movement
     /// and selection, clipboard, Ctrl+Z / Ctrl+Y for the typing itself, Enter for a new line,
-    /// Esc or Ctrl+Enter to finish, Ctrl+B for bold.
-    fn text_keys(&mut self, ctx: &Context) {
+    /// Esc or Ctrl+Enter to finish, Ctrl+B for bold. Save, Pin, Copy Text and Find
+    /// Sensitive Info keep the text and return true: the shortcut then runs as usual.
+    fn text_keys(&mut self, ctx: &Context) -> bool {
         let Some(composing) = self.edit.as_ref().map(|e| !e.preedit.is_empty()) else {
-            return;
+            return false;
         };
-        let (done, events) = ctx.input_mut(|i| {
+        let (done, chord, events) = ctx.input_mut(|i| {
             // While an IME composes, Esc and Enter belong to it.
             let done = !composing
                 && (i.consume_key(Modifiers::NONE, Key::Escape)
                     || i.consume_key(Modifiers::COMMAND, Key::Enter));
-            (done, i.events.clone())
+            let chord = !composing && keys::FINISH_WHILE_TYPING.iter().any(|c| c.pressed(i));
+            (done, chord, i.events.clone())
         });
-        if done {
+        if done || chord {
             self.commit_text();
-            return;
+            return chord && !done;
         }
         let mut changed = false;
         let mut bold = false;
@@ -379,6 +395,7 @@ impl Overlay {
         if bold {
             self.toggle_bold();
         }
+        false
     }
 
     /// Tell the OS where the caret is so an IME can compose (Chinese, Japanese, Korean and
@@ -588,6 +605,7 @@ impl Overlay {
             Vec2::new(self.bounds.w as f32 * k, self.bounds.h as f32 * k),
         );
         let painter = ctx.layer_painter(LayerId::background());
+        self.image_tex.prune();
         let zoomed = !self.view.is_identity();
         if self.windowed {
             // Editor Window: no frozen screen behind the picture.
@@ -716,7 +734,7 @@ impl Overlay {
                     if let ShapeKind::Spotlight { rect, dim } = &s.kind {
                         paint_spotlight_dim(&clip, sel_pt, m.r(*rect), *dim);
                     }
-                    paint_shape(&clip, m, s, false);
+                    paint_shape(&clip, m, s, false, &self.image_tex);
                 }
             }
             self.paint_text_edit(&clip, ctx, m, accent);
@@ -797,7 +815,8 @@ impl Overlay {
                     if let Some((kind, style)) =
                         shapes::highlight_box_from_drag(*a, *cur, &self.params())
                     {
-                        paint_shape(painter, m, &Shape { id: 0, kind, style }, false);
+                        let shape = Shape { id: 0, kind, style };
+                        paint_shape(painter, m, &shape, false, &self.image_tex);
                     }
                 }
                 Tool::Pen | Tool::Highlighter => {
@@ -811,7 +830,8 @@ impl Overlay {
                             points: points.clone(),
                         }
                     };
-                    paint_shape(painter, m, &Shape { id: 0, kind, style }, false);
+                    let shape = Shape { id: 0, kind, style };
+                    paint_shape(painter, m, &shape, false, &self.image_tex);
                 }
                 Tool::Text => {
                     // The box being drawn: its width, at least one line tall.
@@ -830,7 +850,8 @@ impl Overlay {
                         if let ShapeKind::Spotlight { rect, dim } = &kind {
                             paint_spotlight_dim(painter, painter.clip_rect(), m.r(*rect), *dim);
                         }
-                        paint_shape(painter, m, &Shape { id: 0, kind, style }, false);
+                        let shape = Shape { id: 0, kind, style };
+                        paint_shape(painter, m, &shape, false, &self.image_tex);
                     }
                 }
             }
@@ -1483,9 +1504,21 @@ impl Overlay {
                 Order::Tooltip,
                 Id::unique("stinkshot-ov-loupe"),
             ));
+            // The eyedropper's loupe shows pasted pictures too, where the pointer is on
+            // the image.
+            let with_pictures = self
+                .content_cached()
+                .filter(|_| self.picking)
+                .and_then(|c| {
+                    let ip = self.to_image(p);
+                    let (x, y) = (ip.x.floor() as i32, ip.y.floor() as i32);
+                    let inside = x >= 0 && y >= 0 && x < c.width as i32 && y < c.height as i32;
+                    inside.then_some((&**c, x, y))
+                });
             // In the editor the eyedropper loupe magnifies the picture itself.
-            let (img, cx, cy): (&Rgba, i32, i32) = match (self.kind, &self.orig) {
-                (Kind::Annotate, Some(o)) if self.picking => (
+            let (img, cx, cy): (&Rgba, i32, i32) = match (with_pictures, self.kind, &self.orig) {
+                (Some(t), ..) => t,
+                (None, Kind::Annotate, Some(o)) if self.picking => (
                     o,
                     ((p.0 - self.img_origin.0) / self.scale).floor() as i32,
                     ((p.1 - self.img_origin.1) / self.scale).floor() as i32,

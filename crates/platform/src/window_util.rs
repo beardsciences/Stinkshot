@@ -16,11 +16,11 @@ use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
 use windows::Win32::UI::WindowsAndMessaging::{
     ASFW_ANY, AllowSetForegroundWindow, BringWindowToTop, EnumWindows, GWL_EXSTYLE,
     GetForegroundWindow, GetWindowLongPtrW, GetWindowRect, GetWindowThreadProcessId,
-    HWND_NOTOPMOST, HWND_TOPMOST, IsIconic, IsWindowVisible, SMTO_ABORTIFHUNG, SMTO_BLOCK, SW_HIDE,
-    SW_RESTORE, SW_SHOWNA, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
-    SendMessageTimeoutW, SetForegroundWindow, SetWindowDisplayAffinity, SetWindowLongPtrW,
-    SetWindowPos, ShowWindow, WDA_EXCLUDEFROMCAPTURE, WDA_NONE, WM_GETTEXT, WS_EX_APPWINDOW,
-    WS_EX_TOOLWINDOW,
+    HWND_NOTOPMOST, HWND_TOPMOST, IsHungAppWindow, IsIconic, IsWindowVisible, SMTO_ABORTIFHUNG,
+    SMTO_BLOCK, SW_HIDE, SW_RESTORE, SW_SHOWNA, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
+    SWP_NOSIZE, SWP_NOZORDER, SendMessageTimeoutW, SetForegroundWindow, SetWindowDisplayAffinity,
+    SetWindowLongPtrW, SetWindowPos, ShowWindow, WDA_EXCLUDEFROMCAPTURE, WDA_NONE, WM_GETTEXT,
+    WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
 };
 use windows::core::BOOL;
 
@@ -167,10 +167,44 @@ pub fn exclude_from_capture(hwnd: Hwnd, exclude: bool) {
 
 /// Hide from screen capture whatever the setting says: windows that would spoil Stinkshot's
 /// own captures (the recording frame at the region's edge, the scrolling capture's bar).
+/// Debug builds still honor `STINKSHOT_SHOW_IN_CAPTURE=1` so UI reviews can see them.
 pub fn exclude_from_capture_always(hwnd: Hwnd) {
+    if cfg!(debug_assertions) && std::env::var("STINKSHOT_SHOW_IN_CAPTURE").is_ok_and(|v| v == "1")
+    {
+        return;
+    }
     // SAFETY: plain call on a window of this process.
     if let Err(e) = unsafe { SetWindowDisplayAffinity(h(hwnd), WDA_EXCLUDEFROMCAPTURE) } {
         log::warn!("SetWindowDisplayAffinity: {e}");
+    }
+}
+
+/// Cut the middle out of a window, leaving a `border` px ring (SetWindowRgn). The window then
+/// does not exist over its interior: nothing is drawn or composited there, whatever the GPU
+/// does with transparency. Used by the recording frame, which surrounds the recorded area.
+pub fn set_hollow_region(hwnd: Hwnd, border: i32) {
+    use windows::Win32::Graphics::Gdi::{
+        CombineRgn, CreateRectRgn, DeleteObject, RGN_DIFF, RGN_ERROR, SetWindowRgn,
+    };
+    let Some(r) = get_rect(hwnd) else {
+        return;
+    };
+    let b = border.max(1);
+    if r.w <= 2 * b || r.h <= 2 * b {
+        return;
+    }
+    // SAFETY: the regions are created here; SetWindowRgn takes ownership of `outer` when it
+    // succeeds, and every other handle is deleted below.
+    unsafe {
+        let outer = CreateRectRgn(0, 0, r.w, r.h);
+        let inner = CreateRectRgn(b, b, r.w - b, r.h - b);
+        let ok = CombineRgn(Some(outer), Some(outer), Some(inner), RGN_DIFF) != RGN_ERROR
+            && SetWindowRgn(h(hwnd), Some(outer), true) != 0;
+        let _ = DeleteObject(inner.into());
+        if !ok {
+            let _ = DeleteObject(outer.into());
+            log::warn!("set_hollow_region failed");
+        }
     }
 }
 
@@ -209,7 +243,12 @@ pub fn apply_mica(hwnd: Hwnd, dark: bool) {
     }
 }
 
-/// Bring to foreground reliably (AllowSetForegroundWindow / AttachThreadInput dance).
+/// Bring to foreground reliably (AllowSetForegroundWindow, then the AttachThreadInput dance
+/// only when the plain request was refused).
+///
+/// Attaching to the foreground thread's input queue makes this thread wait on that thread,
+/// so it is the fallback, and never used on a foreground app that is not responding (it
+/// would block the caller, usually the UI thread, for as long as that app hangs).
 pub fn force_foreground(hwnd: Hwnd) {
     let w = h(hwnd);
     // SAFETY: window-management calls; thread attachment is always detached before returning.
@@ -218,22 +257,32 @@ pub fn force_foreground(hwnd: Hwnd) {
             let _ = ShowWindow(w, SW_RESTORE);
         }
         let _ = AllowSetForegroundWindow(ASFW_ANY);
-        let fg = GetForegroundWindow();
-        let cur_thread = GetCurrentThreadId();
-        let fg_thread = if fg.0.is_null() {
-            0
-        } else {
-            GetWindowThreadProcessId(fg, None)
-        };
-        let attached = fg_thread != 0
-            && fg_thread != cur_thread
-            && AttachThreadInput(cur_thread, fg_thread, true).as_bool();
         let _ = BringWindowToTop(w);
-        if !SetForegroundWindow(w).as_bool() {
+        let mut ok = SetForegroundWindow(w).as_bool() && GetForegroundWindow() == w;
+        let cur_thread = GetCurrentThreadId();
+        let mut attached_to = None;
+        if !ok {
+            let fg = GetForegroundWindow();
+            let fg_thread = if fg.0.is_null() {
+                0
+            } else {
+                GetWindowThreadProcessId(fg, None)
+            };
+            if fg_thread != 0
+                && fg_thread != cur_thread
+                && !IsHungAppWindow(fg).as_bool()
+                && AttachThreadInput(cur_thread, fg_thread, true).as_bool()
+            {
+                attached_to = Some(fg_thread);
+                let _ = BringWindowToTop(w);
+                ok = SetForegroundWindow(w).as_bool();
+            }
+        }
+        if !ok {
             log::debug!("SetForegroundWindow refused");
         }
         let _ = SetFocus(Some(w));
-        if attached {
+        if let Some(fg_thread) = attached_to {
             let _ = AttachThreadInput(cur_thread, fg_thread, false);
         }
     }

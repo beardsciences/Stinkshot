@@ -9,6 +9,70 @@ write entries for people who use Stinkshot, not for people who read the diff.
 
 ## [Unreleased]
 
+### Fixed
+
+- A white box no longer covers the area being recorded on PCs whose graphics driver gives the
+  recording frame no transparency.
+- Settings > History: a shorter Keep Captures For or a smaller Storage Limit now shows how many
+  captures it would permanently delete and waits for Apply. Before, the change (even one press
+  of the Up arrow) deleted them at once.
+- After a damaged history index is rebuilt, files Stinkshot did not create are no longer
+  treated as captures, so cleanup cannot delete your own pictures in a shared folder.
+- The Storage Limit no longer counts files Stinkshot did not create.
+- Moving or renaming the history folder keeps each capture's app, title and searchable text.
+- Shutting down, restarting or signing out of Windows now finishes a recording in progress and
+  gives the PrintScreen key back to Windows.
+- A recording is no longer lost when the disk fills up (it stops and saves with about 300 MB
+  left), and no longer breaks when the PC sleeps; the PC stays awake while recording.
+- A recording you discarded, or already saved, no longer comes back at the next start.
+- Recording recovers from a monitor change or a graphics driver reset on more setups, and a
+  very small region with the webcam on no longer stops the video.
+- GIF export no longer fails on busy, photo-like frames.
+- If the history folder cannot be written, the capture is saved to the default folder or put
+  on the clipboard instead of being lost, and the toast says which.
+- A history folder on a drive that is not connected at start-up keeps its setting; Stinkshot
+  switches back when the drive returns.
+- Two captures taken in the same second no longer overwrite each other.
+- One bad value in the settings file no longer resets every setting.
+- If Stinkshot hits an internal error it restarts itself, or tells you where the log is,
+  instead of vanishing from the tray.
+- Editor: typing in the Beautify number fields no longer triggers shortcuts (Enter copied and
+  closed, Backspace deleted shapes).
+- Editor: dragging a handle past the opposite edge flips the shape instead of collapsing it.
+- Editor: Find Sensitive Info, Select Text, Codes and the eyedropper now see pasted pictures
+  and canvases.
+- Editor: a picture added to a canvas while a text box was open no longer disappears; pasted
+  items survive when several regions are selected; small pasted pictures keep their size.
+- Editor: Ctrl+S, Ctrl+P, Ctrl+T and Ctrl+R work while typing text; holding an arrow key is
+  one undo step.
+- History: Enter in the delete question no longer deletes when Cancel is focused; recordings
+  show their thumbnail; the list jumps back to the top when you search or filter.
+- Settings > Editor: changing the starting color or stroke width now applies to tools you have
+  already used. Right-click removes a palette color.
+- Window capture no longer rounds the corners of full-screen or Windows 10 windows when it has
+  to use the fallback method.
+- The capture overlay no longer waits on a frozen app before appearing.
+
+### Changed
+
+- Privacy: anything under a Blur, Pixelate or Redact box, including pasted pictures and text,
+  is now also removed from the editable copy kept for re-editing, not only from the saved
+  image.
+- Privacy: copied captures and text are marked so Windows does not sync them to other devices
+  through Cloud Clipboard.
+- Privacy: text of deleted captures is wiped from the search index, and log files no longer
+  record window titles or capture file names.
+- Quit and Update Now ask before closing an Editor Window with unsaved edits.
+- The tray menu says Stop Recording while a recording is running.
+- About has Report a Problem; Open Log is now Show Log.
+- Clearer, more consistent wording across Settings, History and the editor.
+- Windows 10 version 2004 or later is now the stated minimum.
+
+### Security
+
+- The portable build no longer loads system libraries from its own folder.
+- Update Now checks the downloaded installer again immediately before running it.
+
 ## [0.1.4] - 2026-11-13
 
 ### Added

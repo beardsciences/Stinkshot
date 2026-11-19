@@ -218,9 +218,11 @@ impl Rgba {
         Self::decode(&bytes).with_context(|| format!("decoding {}", path.display()))
     }
     pub fn decode(bytes: &[u8]) -> anyhow::Result<Rgba> {
-        let img = ::image::load_from_memory(bytes)
-            .context("image decode failed")?
-            .to_rgba8();
+        let mut reader = ::image::ImageReader::new(std::io::Cursor::new(bytes))
+            .with_guessed_format()
+            .context("image decode failed")?;
+        reader.limits(decode_limits());
+        let img = reader.decode().context("image decode failed")?.to_rgba8();
         let (w, h) = img.dimensions();
         Ok(Rgba {
             width: w,
@@ -290,6 +292,15 @@ impl Rgba {
             data,
         }
     }
+}
+
+/// Decoder limits for the app's own pictures. The image crate stops at 512 MiB of pixels by
+/// default, which a long scrolling capture exceeds (3840 x 60000 is 880 MiB): it would save
+/// and then never open again.
+pub fn decode_limits() -> ::image::Limits {
+    let mut limits = ::image::Limits::default();
+    limits.max_alloc = Some(4 * 1024 * 1024 * 1024);
+    limits
 }
 
 /// Average `k` x `k` blocks of a `w` x `h` RGBA8 image (edge blocks average the pixels they
