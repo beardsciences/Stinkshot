@@ -9,6 +9,8 @@ write entries for people who use Stinkshot, not for people who read the diff.
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-11-19
+
 ### Fixed
 
 - A white box no longer covers the area being recorded on PCs whose graphics driver gives the
@@ -218,7 +220,8 @@ Tagged in the repository; no downloads were published.
 - No upload targets, accounts or telemetry. The update check is the only network request and
   is off by default.
 
-[Unreleased]: https://code.mccullough.dev/christian/stinkshot/compare/v0.1.4...main
+[Unreleased]: https://code.mccullough.dev/christian/stinkshot/compare/v0.1.5...main
+[0.1.5]: https://code.mccullough.dev/christian/stinkshot/compare/v0.1.4...v0.1.5
 [0.1.4]: https://code.mccullough.dev/christian/stinkshot/compare/v0.1.3...v0.1.4
 [0.1.3]: https://code.mccullough.dev/christian/stinkshot/compare/v0.1.2...v0.1.3
 [0.1.2]: https://code.mccullough.dev/christian/stinkshot/compare/v0.1.1...v0.1.2
