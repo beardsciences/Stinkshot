@@ -16,7 +16,8 @@ The order matters:
 5. Site: downloads first, update manifest last (`tools/update-site.ps1` in the site repo).
 6. Check the live site (the site repo's `DEPLOY.md`, step 4).
 7. Forgejo release: `scripts/publish-forgejo.ps1 -Version X.Y.Z`.
-8. winget.
+8. GitHub release on the mirror: `gh release create`.
+9. winget.
 
 Installed copies read `https://stinkshot.com/release/stinkshot-release.json` and download the
 installer from `https://stinkshot.com/download/` (`crates/app/src/update.rs`). The site is what
@@ -121,7 +122,7 @@ It refuses a dirty tree, checks fmt, clippy and tests, builds with `--locked` in
 | `SHA256SUMS`, `SHA256SUMS.minisig` | site `/download/`, Forgejo release |
 | `stinkshot-release.json`, `stinkshot-release.json.minisig` | site `/release/` (the update check reads these), Forgejo release |
 | `RELEASE_NOTES.md` | Forgejo release description |
-| `winget/manifests/s/Stinkshot/Stinkshot/X.Y.Z/` | step 8 |
+| `winget/manifests/s/Stinkshot/Stinkshot/X.Y.Z/` | step 9 |
 | `test/` | step 3 only. Never upload it. |
 
 At the end it reads `SHA256SUMS` and the manifest back, hashes every listed file again and
@@ -222,7 +223,21 @@ a variable you type out, or a file. The script:
 code.mccullough.dev is behind Anubis. If the script gets HTML instead of JSON, Anubis is
 challenging it: allow `/api/` and `/releases/download/` for non-browser clients in its policy.
 
-### 8. winget
+### 8. GitHub release
+
+The GitHub mirror gets code and tags from Forgejo on its own, but not releases. Once the tag
+shows there, publish the same files so the Releases tab is not empty:
+
+```
+cd dist/X.Y.Z
+gh release create vX.Y.Z --repo beardsciences/stinkshot --verify-tag --latest --title "Stinkshot X.Y.Z" --notes-file RELEASE_NOTES.md Stinkshot-X.Y.Z-x64-setup.exe Stinkshot-X.Y.Z-x64-portable.zip Stinkshot-X.Y.Z.cdx.json SHA256SUMS SHA256SUMS.minisig stinkshot-release.json stinkshot-release.json.minisig
+```
+
+`gh` uses its stored sign-in (`gh auth login` once); no token on the command line. This adds a
+release, not a commit: the mirror stays read-only for code. Then download the installer from
+the GitHub release and compare its SHA-256 with `SHA256SUMS`.
+
+### 9. winget
 
 After step 6, once the setup URL downloads. winget-pkgs reviews can take a few days, so
 `winget install` lags behind the site.

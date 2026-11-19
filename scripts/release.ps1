@@ -450,7 +450,8 @@ try {
         Write-Host "  3. Site: in the stinkshot-site repo, tools/update-site.ps1 -DistDir `"$OutDir`" (dry run), then again with -Apply."
         Write-Host '  4. Run the checks in the site''s DEPLOY.md (step 4).'
         Write-Host "  5. Forgejo release:  powershell -ExecutionPolicy Bypass -File scripts/publish-forgejo.ps1 -Version $Version -DistDir `"$OutDir`""
-        Write-Host "  6. winget: submit $OutDir\winget\manifests\s\Stinkshot\Stinkshot\$Version once the setup URL downloads."
+        Write-Host "  6. GitHub release on the mirror: gh release create $Tag (docs/RELEASING.md, step 8)."
+        Write-Host "  7. winget: submit $OutDir\winget\manifests\s\Stinkshot\Stinkshot\$Version once the setup URL downloads."
     }
 }
 finally {
