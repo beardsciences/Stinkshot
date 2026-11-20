@@ -122,22 +122,20 @@ pub fn get(key: &str) -> Option<&'static str> {
         "overlay.hint.remove_region" => "Remove Region",
         "overlay.hint.nudge" => "Nudge",
         // Hint bar notices.
-        "overlay.notice.discard_prompt" => "Press Esc Again to Discard Your Annotations",
+        "overlay.notice.discard_prompt" => "Press Esc Again to Discard",
         "overlay.notice.pick_from_image" => "Pick a Color From the Image",
         "overlay.notice.pick_color_format" => "Pick a Color \u{b7} {format}",
         "overlay.notice.copied_hex" => "Copied {hex}",
-        "overlay.notice.clipboard_busy_c" => "Clipboard Busy, Press C Again",
-        "overlay.notice.clipboard_busy" => "Clipboard Busy, Try Again",
+        "overlay.notice.clipboard_busy_c" => "Clipboard Busy \u{b7} Press C Again",
+        "overlay.notice.clipboard_busy" => "Clipboard Busy \u{b7} Try Again",
         "overlay.notice.add_regions_first" => "Add Regions Before Annotating",
-        "overlay.notice.add_regions_hint" => "Drag to Add Regions, Enter Copies All",
-        "overlay.notice.copied_shape" => "Copied 1 Shape: {key} to Paste",
-        "overlay.notice.copied_shapes" => "Copied {n} Shapes: {key} to Paste",
-        "overlay.notice.cursor_kept" => "Cursor Kept: Del Removes It",
+        "overlay.notice.add_regions_hint" => "Drag to Add Regions \u{b7} Enter Copies All",
+        "overlay.notice.copied_shape" => "Copied 1 Shape \u{b7} {key} to Paste",
+        "overlay.notice.copied_shapes" => "Copied {n} Shapes \u{b7} {key} to Paste",
+        "overlay.notice.cursor_kept" => "Cursor Kept \u{b7} Del Removes It",
         // Finish errors (toasts).
         "overlay.error.finish_title" => "Could Not Finish Capture",
-        "overlay.error.finish_body" => {
-            "Stinkshot could not start the final render. Press Enter to try again."
-        }
+        "overlay.error.finish_body" => "Press Enter to try again.",
         "overlay.error.render_title" => "Could Not Render Annotations",
         "overlay.error.render_body" => {
             "The capture was not saved. Try again, or remove the last annotation."
@@ -277,7 +275,7 @@ pub fn get(key: &str) -> Option<&'static str> {
         "overlay.redact.apply_one" => "Redact 1 Selected",
         "overlay.redact.apply_many" => "Redact {n} Selected",
         "overlay.redact.cancel" => "Cancel",
-        "overlay.redact.start_failed" => "Could Not Start Finding Sensitive Info",
+        "overlay.redact.start_failed" => "Could Not Find Sensitive Info",
         "overlay.redact.read_failed" => "Could Not Read the Text in This Image",
         "overlay.redact.kind.email" => "Email Address",
         "overlay.redact.kind.phone" => "Phone Number",
@@ -297,7 +295,7 @@ pub fn get(key: &str) -> Option<&'static str> {
         "overlay.select_text.reading" => "Reading Text\u{2026}",
         "overlay.select_text.none" => "No Text Found",
         "overlay.select_text.failed" => "Could Not Read Text",
-        "overlay.select_text.no_ocr" => "Select Text Needs an OCR Language in Windows Settings",
+        "overlay.select_text.no_ocr" => "Needs an OCR Language in Windows Settings",
         "overlay.keys.select_all_text" => "Select All Text (Select Text Tool)",
         "overlay.keys.free_resize" => "Resize a Snapped Region Past Its Window",
         _ => return None,

@@ -287,7 +287,7 @@ mod tests {
         assert!(
             STEPS
                 .iter()
-                .any(|s| s.title() == "Nothing Ever Leaves Your PC")
+                .any(|s| s.title() == "Your Captures Never Leave Your PC")
         );
     }
 

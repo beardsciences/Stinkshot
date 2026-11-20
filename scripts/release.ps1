@@ -168,7 +168,7 @@ function Invoke-CodeSign([string[]]$Files) {
 # ------------------------------------------------------------------ inputs
 
 $savedEnv = @{}
-foreach ($n in 'CARGO_TARGET_DIR', 'CARGO_BUILD_JOBS', 'STINKSHOT_PROFILE', 'SOURCE_DATE_EPOCH', 'PATH') { $savedEnv[$n] = [Environment]::GetEnvironmentVariable($n) }
+foreach ($n in 'CARGO_TARGET_DIR', 'CARGO_BUILD_JOBS', 'STINKSHOT_PROFILE', 'SOURCE_DATE_EPOCH', 'CARGO_ENCODED_RUSTFLAGS', 'PATH') { $savedEnv[$n] = [Environment]::GetEnvironmentVariable($n) }
 
 Push-Location $Repo
 try {
@@ -251,6 +251,14 @@ try {
         Invoke-Native cargo @('test', '--workspace', '--locked')
     }
 
+    # Keep this PC's paths (and the Windows user name in them) out of the exe: panic messages
+    # and debug info otherwise carry the full path of every source file.
+    $cargoHome = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { Join-Path $env:USERPROFILE '.cargo' }
+    $rustupHome = if ($env:RUSTUP_HOME) { $env:RUSTUP_HOME } else { Join-Path $env:USERPROFILE '.rustup' }
+    $remap = @("--remap-path-prefix=$cargoHome=cargo", "--remap-path-prefix=$rustupHome=rustup", "--remap-path-prefix=$Repo=stinkshot", "--remap-path-prefix=$TargetDir=target")
+    $sep = [string][char]0x1f
+    $env:CARGO_ENCODED_RUSTFLAGS = (@(@($env:CARGO_ENCODED_RUSTFLAGS -split $sep | Where-Object { $_ }) + $remap) -join $sep)
+
     $artifacts = @()
     foreach ($a in $Arch) {
         $triple = $Triples[$a]
@@ -267,6 +275,12 @@ try {
         $exe = Join-Path $TargetDir "$triple\release\stinkshot.exe"
         $info = (Get-Item -LiteralPath $exe).VersionInfo
         if ($info.ProductVersion -ne $Version) { Fail "exe ProductVersion is '$($info.ProductVersion)', expected $Version" }
+        # The remap above must have worked: no trace of this PC's user folder in the exe.
+        $exeText = [Text.Encoding]::GetEncoding(28591).GetString([IO.File]::ReadAllBytes($exe))
+        foreach ($leak in @($env:USERPROFILE, $env:USERPROFILE.Replace('\', '/'), $Repo, $TargetDir) | Select-Object -Unique) {
+            if ($leak -and $exeText.IndexOf($leak, [StringComparison]::OrdinalIgnoreCase) -ge 0) { Fail "the exe contains the local path '$leak' (--remap-path-prefix did not apply)" }
+        }
+        $exeText = $null
 
         $stage = Join-Path $OutDir "stage-$a"
         if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }

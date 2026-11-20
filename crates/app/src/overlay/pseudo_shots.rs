@@ -280,7 +280,7 @@ fn render(
     let ctx = Context::default();
     theme::install(&ctx, fonts, true, Color32::from_rgb(0x4c, 0xc2, 0xff));
     let (w, h) = (size.x as u32, size.y as u32);
-    let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+    let format = wgpu::TextureFormat::Rgba8Unorm; // like the app windows (gamma-space blending)
     let mut renderer = egui_wgpu::Renderer::new(dev, format, Default::default());
     let mut jobs = Vec::new();
     let mut ppp = 1.0;

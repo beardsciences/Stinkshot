@@ -2221,7 +2221,7 @@ mod tests {
     #[test]
     fn titles_and_apps_are_prettified() {
         assert_eq!(empty_hint("PrtSc"), {
-            "Press PrtSc to capture a region. Everything you capture is saved here, with searchable text."
+            "Press PrtSc to capture a region. Captures are saved here, searchable by their text."
         });
         assert!(!empty_hint("Not Set").contains("Press"));
         assert!(!empty_hint("").contains("Press"));

@@ -154,6 +154,19 @@ and uninstall. The exit code is the number of failed checks.
   values by hand while your own copy runs. Only Windows Sandbox or a VM isolates everything,
   which an upgrade test over a running copy needs.
 
+#### Manual Pass
+
+The smoke test cannot see the screen. Before tagging, with the test install:
+
+- [ ] `scripts\check.ps1 -Desktop`: the tests that need a real desktop session.
+- [ ] Region capture, annotate, copy. Paste it somewhere.
+- [ ] Record an MP4 and a GIF. Play both.
+- [ ] Settings and the overlay with the keyboard only, then with Narrator on
+      (`docs/notes/accessibility.md`).
+- [ ] One capture on each monitor: check scaling and, on the HDR monitor, colors.
+- [ ] Update from the previous release with Update Now. Use Windows Sandbox or a spare PC,
+      never your own install.
+
 ### 4. Tag and push
 
 The tag must point at the commit `release.ps1` built. It prints the commit first, and
@@ -170,7 +183,20 @@ git push origin vX.Y.Z
 Everything under `site/` in the site repo (`C:\dev\stinkshot-site`) is live the moment it is
 saved. The order is: downloads, then the page, then the update manifest last, so the app
 never points anyone at a file that is not there yet. `tools/update-site.ps1` does it in that
-order. From the site repo:
+order.
+
+First re-render the site's clips and screenshots from the new tag, from this repo:
+
+```
+powershell -ExecutionPolicy Bypass -File scripts/site-media.ps1 -Version X.Y.Z
+```
+
+It checks out the tag, drives the app's own UI offscreen (nothing on your screen is touched),
+writes the clips and crops into the site and records the version in the site's `media.json`.
+The site's `tools/check_site.py` fails while the media is older than the release. Look at the
+pages afterwards: a UI change can move a button a scripted click was aimed at.
+
+Then, from the site repo:
 
 ```
 powershell -ExecutionPolicy Bypass -File tools/update-site.ps1 -DistDir C:/dev/stinkshot/dist/X.Y.Z
@@ -187,6 +213,8 @@ text change, and changes nothing. The second does it:
 - copies `stinkshot-release.json` and its `.minisig` to `site/release/`
 - verifies that every hash in the copied `SHA256SUMS` and manifest matches the copied files
   and that the hash shown on the page is the installer's
+- regenerates the Releases page and runs `tools/check_site.py` (links, versions, hashes,
+  copy rules, media freshness)
 
 **Never delete old installers from `site/download/`.** The winget manifest of each version
 points at `https://stinkshot.com/download/Stinkshot-<version>-x64-setup.exe` and pins its

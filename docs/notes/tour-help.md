@@ -4,7 +4,7 @@
 
 - Own small window "Welcome to Stinkshot" (560x400, not resizable), four steps: Capture With a
   Hotkey (region key plus Window / Full Screen / Record MP4 keys from the live config), It Lives
-  in the Tray, Nothing Ever Leaves Your PC, Where Captures Go (the resolved history folder).
+  in the Tray, Your Captures Never Leave Your PC, Where Captures Go (the resolved history folder).
 - Skippable at every step (Skip Tour, Esc, close box). Enter / Right go forward, Left goes back.
   The last step has Open Help (Settings > Help) and Done.
 - Shown once: the shell queues `Command::OpenTour` at start-up when `general.tour_seen` is false

@@ -750,6 +750,16 @@ pub mod widgets {
                     ui.vertical(|ui| {
                         ui.set_max_width(max_w);
                         ui.spacing_mut().item_spacing.y = 3.0;
+                        // A title with nothing under it sits level with the controls, not
+                        // at the top of the row.
+                        if desc.is_empty() && alert.is_none() && !stacked {
+                            let font = egui::FontId::proportional(14.0 * ts);
+                            let line = ui.fonts_mut(|f| f.row_height(&font));
+                            let gap = (ui.spacing().interact_size.y - line) / 2.0;
+                            if gap > 0.0 {
+                                ui.add_space(gap);
+                            }
+                        }
                         let t = match &hit {
                             Some(m) => ui.add(
                                 egui::Label::new(crate::settings_search::highlighted(

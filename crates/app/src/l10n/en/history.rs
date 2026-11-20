@@ -17,14 +17,14 @@ pub fn get(key: &str) -> Option<&'static str> {
         "history.item.fallback" => "Capture",
         "history.empty.title" => "No Captures Yet",
         "history.empty.hint_tray" => {
-            "Use the button below or the Stinkshot tray icon to capture a region. Everything you capture is saved here, with searchable text."
+            "Use the button below or the tray icon. Captures are saved here, searchable by their text."
         }
         "history.empty.hint_key" => {
-            "Press {key} to capture a region. Everything you capture is saved here, with searchable text."
+            "Press {key} to capture a region. Captures are saved here, searchable by their text."
         }
         "history.empty.capture" => "Capture a Region",
         "history.nomatch.title" => "Nothing Matches",
-        "history.nomatch.body" => "Try different words, another date range, or clear the filters.",
+        "history.nomatch.body" => "Try other words or clear the filters.",
         "history.clear_filters" => "Clear Filters",
         "history.retention.day" => "1 day",
         "history.retention.days" => "{n} days",
@@ -56,7 +56,7 @@ pub fn get(key: &str) -> Option<&'static str> {
         "history.act.images_only" => "Images Only",
         "history.error.load" => "Could not read the history index. {why}",
         "history.error.load_fix" => {
-            "Restart Stinkshot; if it keeps happening, choose another history folder in Settings."
+            "Restart Stinkshot. If it keeps happening, choose another history folder in Settings."
         }
         "history.nav.all" => "All Captures",
         "history.nav.starred" => "Starred",

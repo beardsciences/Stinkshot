@@ -70,7 +70,17 @@ jobs:
 
       - name: Build
         shell: pwsh
-        run: cargo build --release --locked -p stinkshot --target $env:TRIPLE
+        run: |
+          # Keep the runner's paths out of the exe, the same way scripts/release.ps1 does.
+          $cargoHome = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { Join-Path $env:USERPROFILE '.cargo' }
+          $rustupHome = if ($env:RUSTUP_HOME) { $env:RUSTUP_HOME } else { Join-Path $env:USERPROFILE '.rustup' }
+          $env:CARGO_ENCODED_RUSTFLAGS = @(
+            "--remap-path-prefix=$cargoHome=cargo",
+            "--remap-path-prefix=$rustupHome=rustup",
+            "--remap-path-prefix=$env:GITHUB_WORKSPACE=stinkshot",
+            "--remap-path-prefix=$env:GITHUB_WORKSPACE\target=target"
+          ) -join [string][char]0x1f
+          cargo build --release --locked -p stinkshot --target $env:TRIPLE
 
       - name: Stage
         shell: pwsh

@@ -1,6 +1,6 @@
-# Security policy
+# Security Policy
 
-## What Stinkshot promises
+## What Stinkshot Promises
 
 - Captures never leave your PC. There are no upload targets, share targets, accounts or
   telemetry, and there never will be.
@@ -10,24 +10,24 @@
   User-Agent).
 - The update check trusts version info only after verifying its minisign (Ed25519) signature
   against the public key built into the app.
-- Update Now runs only when you click it (or run `stinkshot update`). It downloads the setup.exe
-  the signed release info lists, from stinkshot.com/download only, and runs it only if its size
-  and SHA-256 match that signed info; otherwise the file is deleted and the download page opens.
-  Copies the setup did not install (portable, dev builds) only ever get the download page.
+- Update Now runs only when you click it or run `stinkshot update`. It downloads the setup.exe
+  named in the signed release info, from stinkshot.com/download only. It runs the file only if
+  its size and SHA-256 match the signed info. Otherwise it deletes the file and opens the
+  download page. Portable and dev builds only ever get the download page.
 
-A finding that breaks any of these is a security bug, as is anything that lets another
-program or web page read captures through Stinkshot, or a redaction that leaves the original
+These are security bugs: anything that breaks a promise above, anything that lets another
+program or web page read captures through Stinkshot, and a redaction that leaves the original
 pixels in the exported image.
 
 Known and documented: with Keep Editable Originals on, an editable copy of an annotated capture
 is kept in `<history folder>\.stinkshot\edit`. Redactions are applied to it, but what other
-annotations cover is kept (see README, Redaction and Editable Originals).
+annotations cover is kept. See Redaction and Editable Originals in `README.md`.
 
-## Supported versions
+## Supported Versions
 
 Only the latest release gets fixes.
 
-## Reporting a vulnerability
+## Reporting a Vulnerability
 
 Email the maintainer at christian@mccullough.dev. Do not open an issue: issues on the
 repository are public.
@@ -36,7 +36,7 @@ Include the Stinkshot version (`stinkshot --version`), Windows version, and step
 You should get an answer within a week. Fixed issues are credited in CHANGELOG.md unless you
 ask otherwise.
 
-## Verifying a download
+## Verifying a Download
 
 Every release ships `SHA256SUMS` and `SHA256SUMS.minisig`. With
 [minisign](https://jedisct1.github.io/minisign/):
@@ -48,5 +48,5 @@ minisign -Vm SHA256SUMS -P RWSgFp6pSQuSoo99V89nCiRKQ+SToPCxbnLeyViYxFzzfnbNKV77D
 then compare the file's hash (`Get-FileHash <file>` in PowerShell) with its line in
 `SHA256SUMS`. The same key is in `crates/app/assets/release-key.pub`.
 
-Releases may also be Authenticode-signed; unsigned builds are not tampered builds, but check the
+Releases may also be Authenticode-signed. An unsigned build is not a tampered one. Check the
 minisign signature either way.

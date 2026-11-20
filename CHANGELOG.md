@@ -9,6 +9,14 @@ write entries for people who use Stinkshot, not for people who read the diff.
 
 ## [Unreleased]
 
+### Changed
+
+- Shorter wording across Settings, messages and command-line help.
+
+### Security
+
+- The app file no longer contains folder paths from the PC it was built on.
+
 ## [0.1.5] - 2026-11-19
 
 ### Fixed

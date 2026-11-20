@@ -2784,7 +2784,7 @@ mod tests {
         assert_eq!(
             hotkey_banner(&many),
             format!(
-                "2 hotkeys are already used by another program. Close it or pick other keys below.\n{invalid}"
+                "2 hotkeys are used by another program. Close it or pick other keys.\n{invalid}"
             )
         );
         assert_eq!(hotkey_banner(&[]), "");

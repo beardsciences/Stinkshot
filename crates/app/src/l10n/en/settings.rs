@@ -3,7 +3,7 @@
 pub fn get(key: &str) -> Option<&'static str> {
     Some(match key {
         "settings.language" => "Language",
-        "settings.language.desc" => "Language for menus and messages.",
+        "settings.language.desc" => "Menus and messages.",
         "settings.language.system" => "System Default",
         "settings.language.en" => "English",
         "settings.language.pseudo" => "Pseudo",
@@ -44,7 +44,7 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.hotkeys.still_in_use" => "Still in use.",
         "settings.hotkeys.no_change" => "No change.",
         "settings.hotkeys.in_use_many" => {
-            "{n} hotkeys are already used by another program. Close it or pick other keys below."
+            "{n} hotkeys are used by another program. Close it or pick other keys."
         }
         "settings.capture.example_title" => "Example Page",
         "settings.capture.pattern.desc" => {
@@ -59,10 +59,8 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.history.folder.desc" => {
             "{path}\nCaptures in the old folder stay there and leave History."
         }
-        "settings.history.ocr.desc" => "Read the text in each capture so History can search it.",
-        "settings.history.ocr.desc_missing" => {
-            "Read the text in each capture so History can search it. No OCR language is installed. {help}"
-        }
+        "settings.history.ocr.desc" => "Runs offline in the background.",
+        "settings.history.ocr.desc_missing" => "No OCR language is installed. {help}",
         "settings.history.stats" => "{count} items, {size} used.",
         "settings.privacy.never_checked" => "Never checked",
         "settings.privacy.just_now" => "just now",
@@ -70,18 +68,12 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.privacy.h_ago" => "{n} h ago",
         "settings.privacy.days_ago" => "{n} days ago",
         "settings.privacy.last_checked" => "Last checked {ago}",
-        "settings.privacy.check_requested" => {
-            "Asked for the latest release. A message appears when it answers."
-        }
+        "settings.privacy.check_requested" => "Checking. A message shows the result.",
         "settings.privacy.stored_in" => "Settings are stored in {path}.",
-        "settings.about.log_failed.body" => {
-            "Windows could not show the log file. Try again in a moment."
-        }
+        "settings.about.log_failed.body" => "Try again in a moment.",
         "settings.open_history" => "Open History",
         "settings.general.start_with_windows" => "Start With Windows",
-        "settings.general.start_with_windows.desc" => {
-            "Launch Stinkshot to the tray when you sign in."
-        }
+        "settings.general.start_with_windows.desc" => "Starts in the tray when you sign in.",
         "settings.theme.dark" => "Dark",
         "settings.theme.light" => "Light",
         "settings.theme.system" => "System Default",
@@ -93,24 +85,22 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.general.windows_accent.tip" => "Use the Windows Accent Color",
         "settings.general.after_capture" => "After a Capture",
         "settings.general.copy" => "Copy to Clipboard",
-        "settings.general.copy.desc" => "Put every finished capture on the clipboard.",
+        "settings.general.copy.desc" => "Every finished capture.",
         "settings.general.toast" => "Show Toast",
         "settings.general.toast.desc" => "A small card with quick actions after each capture.",
         "settings.general.toast_duration" => "Toast Duration",
-        "settings.general.toast_duration.desc" => {
-            "How long the toast stays. Hovering pauses the timer."
-        }
+        "settings.general.toast_duration.desc" => "Hovering pauses the timer.",
         "settings.general.sound" => "Play Sound",
         "settings.general.hide_capture" => "Hide Stinkshot From Captures",
         "settings.general.hide_capture.desc" => {
-            "Keep the editor, toasts and recording bar out of captures and recordings."
+            "The editor, toasts and recording bar, in recordings too."
         }
         "settings.general.sound.desc" => "A short shutter sound after capturing.",
         "settings.general.pins" => "Pins",
         "settings.general.pin_task_view" => "Show Pins in Task View",
         "settings.general.pin_task_view.desc" => "List pins in Alt+Tab, Task View and the taskbar.",
         "settings.general.pin_toolbar" => "Always Show Pin Toolbar",
-        "settings.general.pin_toolbar.desc" => "Toolbar above each pin. Off: it shows on hover.",
+        "settings.general.pin_toolbar.desc" => "Off: the toolbar shows on hover.",
         "settings.hotkeys.integration" => "Windows Integration",
         "settings.hotkeys.replace_snip" => "Replace Snipping Tool",
         "settings.hotkeys.replace_snip.desc" => {
@@ -121,25 +111,19 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.hotkeys.printscreen.desc" => "PrtSc opens Stinkshot.",
         "settings.hotkeys.shortcuts" => "Hotkeys",
         "settings.hotkeys.clear" => "Clear",
-        "settings.hotkeys.chord_fixed" => "Fixed by Windows; it cannot be changed.",
+        "settings.hotkeys.chord_fixed" => "Fixed by Windows.",
         "settings.hotkeys.help" => {
             "Click a hotkey, then press the keys. Esc cancels, Backspace clears."
         }
         "settings.hotkeys.reset" => "Reset Hotkeys",
         "settings.capture.cursor" => "Include Mouse Cursor",
-        "settings.capture.cursor.desc" => "Draw the cursor into captures.",
+        "settings.capture.cursor.desc" => "",
         "settings.capture.cursor_object" => "Cursor as Object",
-        "settings.capture.cursor_object.desc" => {
-            "In the editor, keep the cursor as a movable object. Del removes it."
-        }
+        "settings.capture.cursor_object.desc" => "Move it in the editor. Del removes it.",
         "settings.capture.snap" => "Snap to Windows and Elements",
-        "settings.capture.snap.desc" => {
-            "Highlight windows and UI elements under the cursor for one-click capture."
-        }
+        "settings.capture.snap.desc" => "Click a highlighted window or element to capture it.",
         "settings.capture.loupe" => "Magnifier Loupe",
-        "settings.capture.loupe.desc" => {
-            "Show a pixel loupe with coordinates and color while selecting."
-        }
+        "settings.capture.loupe.desc" => "Coordinates and color under the cursor while selecting.",
         "settings.capture.open_editor" => "Edit Window and Full Screen Captures",
         "settings.capture.open_editor.desc" => {
             "Off: they save right away. Use Edit on the toast to annotate."
@@ -153,13 +137,13 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.capture.corners" => "Rounded Corners",
         "settings.capture.corners.desc" => "Keep the real Windows 11 corners, transparent in PNG.",
         "settings.capture.shadow" => "Drop Shadow",
-        "settings.capture.shadow.desc" => "Add a soft shadow around captured windows.",
+        "settings.capture.shadow.desc" => "",
         "settings.capture.frame" => "Padded Background Frame",
         "settings.capture.frame.desc" => "Place the window on a colored backdrop for sharing.",
         "settings.capture.padding" => "Padding",
         "settings.capture.padding.desc" => "Space around the window.",
         "settings.capture.padding_color" => "Padding Color",
-        "settings.capture.padding_color.desc" => "Backdrop color for the padded frame.",
+        "settings.capture.padding_color.desc" => "",
         "settings.capture.saving" => "Saving",
         "settings.capture.format" => "Image Format",
         "settings.capture.format.desc" => {
@@ -178,7 +162,7 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.editor.defaults" => "Defaults",
         "settings.editor.color" => "Starting Color",
         "settings.editor.color.desc" => {
-            "For tools not used yet. Keys 1 to 8 pick palette colors in the editor."
+            "Each tool remembers its last color. Changing this resets them all."
         }
         "settings.editor.stroke" => "Stroke Width",
         "settings.editor.stroke.desc" => "Lines, arrows and shapes.",
@@ -200,7 +184,7 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.editor.reset" => "Reset",
         "settings.recording.video" => "Video",
         "settings.recording.fps" => "Frame Rate",
-        "settings.recording.fps.desc" => "MP4 frame rate. 120 FPS needs hardware encoding.",
+        "settings.recording.fps.desc" => "120 FPS needs hardware encoding.",
         "settings.recording.bitrate" => "Bitrate",
         "settings.recording.bitrate.desc" => "Higher is sharper and larger.",
         "settings.recording.countdown" => "Countdown",
@@ -210,7 +194,7 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.recording.clicks" => "Show Mouse Clicks",
         "settings.recording.clicks.desc" => "Expanding ripples around clicks.",
         "settings.recording.keys" => "Show Key Presses",
-        "settings.recording.keys.desc" => "Show pressed keys in the recording.",
+        "settings.recording.keys.desc" => "",
         "settings.recording.audio_webcam" => "Audio and Webcam",
         "settings.recording.system_audio" => "System Audio",
         "settings.recording.system_audio.desc" => "Record what your PC is playing.",
@@ -218,16 +202,16 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.recording.mic.desc" => "Mix your microphone into the recording.",
         "settings.recording.default_device" => "Default Device",
         "settings.recording.mic_device" => "Microphone Device",
-        "settings.recording.mic_device.desc" => "Which input to record.",
+        "settings.recording.mic_device.desc" => "Default Device follows Windows.",
         "settings.recording.scanning" => "Looking for devices\u{2026}",
         "settings.recording.webcam" => "Webcam Bubble",
         "settings.recording.webcam.desc" => "Show a round webcam overlay in the recording.",
         "settings.recording.webcam_device" => "Webcam Device",
         "settings.recording.webcam_device.desc" => "Which camera to show.",
         "settings.recording.webcam_size" => "Webcam Size",
-        "settings.recording.webcam_size.desc" => "Bubble diameter.",
+        "settings.recording.webcam_size.desc" => "",
         "settings.recording.devices" => "Devices",
-        "settings.recording.devices.desc" => "Rescan microphones and webcams.",
+        "settings.recording.devices.desc" => "",
         "settings.recording.refresh" => "Refresh Devices",
         "settings.recording.gif" => "GIF Output",
         "settings.recording.gif_fps" => "GIF Frame Rate",
@@ -267,13 +251,13 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.history.originals.desc" => {
             "Keep annotations editable later. Anything under a blur, pixelate or redact box is never stored."
         }
-        "settings.privacy.card" => "Your Captures Never Leave This PC",
+        "settings.privacy.card" => "Your Captures Never Leave Your PC",
         "settings.privacy.card.body" => {
-            "Stinkshot has no upload targets, no accounts and no telemetry. OCR runs on Windows' built-in engine, offline. The only network request it can make is the update check below, and it is off until you turn it on."
+            "No uploads, accounts or telemetry. OCR runs offline on Windows' built-in engine. The only network request is the update check below, off until you turn it on."
         }
         "settings.privacy.updates" => "Check for Updates",
         "settings.privacy.updates.desc" => {
-            "Once a day, fetches signed release info from stinkshot.com. Sends nothing else. Update Now downloads the signed installer only when you click it."
+            "Fetches signed release info from stinkshot.com once a day. Sends nothing else. Update Now downloads only when you click it."
         }
         "settings.privacy.check_now" => "Check Now",
         "settings.privacy.manual_check" => "Manual Check",
@@ -283,10 +267,10 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.privacy.updates_off" => "Turn On Update Checks First",
         "settings.privacy.update_ready" => "Stinkshot {tag} Is Available",
         "settings.privacy.update_ready.desc" => {
-            "Downloads the signed installer from stinkshot.com, then restarts on the new version."
+            "Downloads the installer and checks it against the signed release info. Then restarts on the new version."
         }
         "settings.privacy.update_page.desc" => {
-            "This copy was not installed by the setup, so get it from the download page."
+            "Not installed by the setup. Get it from the download page."
         }
         "settings.privacy.update_now" => "Update Now",
         "settings.privacy.download" => "Download",
@@ -296,7 +280,7 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.privacy.open_file" => "Open File",
         "settings.privacy.open_file_failed" => "Could Not Open File",
         "settings.privacy.open_file_failed.hint" => {
-            "Windows could not open the settings file. Check that a text editor is set for .toml files."
+            "Check that a text editor is set for .toml files."
         }
         "settings.about.license" => "License",
         "settings.about.license.desc" => "Free software: use, study, share and change it.",
@@ -309,9 +293,7 @@ pub fn get(key: &str) -> Option<&'static str> {
         }
         "settings.about.copy_failed" => "Could Not Copy",
         "settings.about.log" => "Log",
-        "settings.about.log.desc" => {
-            "Error details are written to stinkshot.log. Include it when reporting a problem."
-        }
+        "settings.about.log.desc" => "Include stinkshot.log when reporting a problem.",
         "settings.about.open_log" => "Show Log",
         "settings.about.log_failed" => "Could Not Show the Log",
         "settings.about.report" => "Report a Problem",
@@ -319,7 +301,7 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.about.report.open" => "Open Issues",
         "settings.about.privacy" => "Privacy",
         "settings.about.privacy.desc" => {
-            "Local only: no uploads, no accounts, no telemetry. The single optional network call is the update check."
+            "No uploads, accounts or telemetry. The only network request is the optional update check."
         }
         "settings.about.offline" => "Offline by Default",
         "settings.nav.help" => "Help",
@@ -330,7 +312,7 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.help.hotkeys.desc" => "Work anywhere while Stinkshot runs.",
         "settings.help.change_hotkeys" => "Change Hotkeys",
         "settings.help.editor" => "Editor Shortcuts",
-        "settings.help.editor.desc" => "In the editor. Press F1 or ? there for this list.",
+        "settings.help.editor.desc" => "Press F1 or ? in the editor for this list.",
         "settings.help.tray" => "Tray Icon",
         "settings.help.tray.click" => "Click",
         "settings.help.tray.click.what" => "Capture a Region",
@@ -344,9 +326,9 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.help.f.scroll" => "Scrolling",
         "settings.help.f.scroll.desc" => "Scrolls a window and stitches one tall image.",
         "settings.help.f.ocr" => "Copy Text (OCR)",
-        "settings.help.f.ocr.desc" => "Windows' offline OCR; also searchable in History.",
+        "settings.help.f.ocr.desc" => "Offline Windows OCR. History search uses it too.",
         "settings.help.f.annotate" => "Annotate",
-        "settings.help.f.annotate.desc" => "Arrows, shapes, text, steps, blur, redact and more.",
+        "settings.help.f.annotate.desc" => "Arrows, shapes, text, steps, blur and redact.",
         "settings.help.f.sensitive" => "Find Sensitive Info",
         "settings.help.f.sensitive.desc" => "Spots emails, keys and numbers to redact.",
         "settings.help.f.beautify" => "Beautify",
@@ -354,7 +336,7 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.help.f.pin" => "Pin",
         "settings.help.f.pin.desc" => "Keep a capture on top of other windows.",
         "settings.help.f.record" => "Record MP4 or GIF",
-        "settings.help.f.record.desc" => "Hardware-encoded video, trim before saving.",
+        "settings.help.f.record.desc" => "Hardware-encoded video. Trim before saving.",
         "settings.help.f.history" => "History",
         "settings.help.f.history.desc" => "Every capture, searchable. Ctrl+H from Settings.",
         "settings.help.files" => "File Locations",

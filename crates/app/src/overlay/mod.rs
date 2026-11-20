@@ -38,6 +38,8 @@
 
 mod beautify_panel;
 mod cursor;
+#[cfg(test)]
+mod demo_clips;
 mod hover;
 pub(crate) mod keys;
 mod measure;

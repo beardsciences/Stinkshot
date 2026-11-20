@@ -1,0 +1,42 @@
+# Runs the checks from scripts/check.ps1 on every push to main. GitHub is a mirror of
+# https://code.mccullough.dev/christian/stinkshot: never commit there, push to Forgejo.
+# Tests that need a real desktop session are marked #[ignore] and only run locally
+# (scripts\check.ps1 -Desktop).
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    # Forgejo Actions also reads .github/workflows; this keeps the job on GitHub only.
+    if: github.server_url == 'https://github.com' && github.repository == 'beardsciences/stinkshot'
+    runs-on: windows-2025
+    timeout-minutes: 60
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Rust toolchain
+        shell: pwsh
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy --no-self-update
+          rustup default stable
+          rustc --version
+
+      - name: Check
+        shell: pwsh
+        run: ./scripts/check.ps1 -NoAudit

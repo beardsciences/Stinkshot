@@ -21,9 +21,9 @@ pub fn get(key: &str) -> Option<&'static str> {
         "shell.action.region.desc" => "Freeze the screen and drag a region.",
         "shell.action.window.desc" => "Capture the active window with its rounded corners.",
         "shell.action.fullscreen.desc" => "Capture the monitor under the cursor.",
-        "shell.action.scrolling.desc" => "Select a region; Stinkshot scrolls and stitches it.",
+        "shell.action.scrolling.desc" => "Select a region to scroll and stitch.",
         "shell.action.ocr.desc" => "Select a region and copy the recognized text.",
-        "shell.action.repeat_last.desc" => "Capture the previous region again without selecting.",
+        "shell.action.repeat_last.desc" => "Capture the previous region again.",
         "shell.action.selected_text.desc" => "Capture the text highlighted in the active app.",
         "shell.action.selected_paragraph.desc" => {
             "Capture the paragraphs around the highlighted text."
@@ -35,7 +35,7 @@ pub fn get(key: &str) -> Option<&'static str> {
         "shell.action.record_gif.desc" => "Select a region and record a size-optimized GIF.",
         "shell.error.disk_full" => "The disk is full. Free up some space, then try again.",
         "shell.error.access_denied" => {
-            "Windows blocked access to the file or folder. Check that it is not read-only or protected, or choose another folder."
+            "Windows blocked access to the file or folder. Check its permissions or choose another folder."
         }
         "shell.error.path_too_long" => {
             "The file path is too long. Choose a shorter folder or file name pattern."
@@ -51,7 +51,7 @@ pub fn get(key: &str) -> Option<&'static str> {
             "Another app is using the clipboard. Try again in a moment."
         }
         "shell.error.offline" => {
-            "Stinkshot could not reach the server. Check your internet connection and try again later."
+            "Could not reach stinkshot.com. Check your connection and try again."
         }
         "shell.toast.edit" => "Edit",
         "shell.toast.copy" => "Copy",
@@ -68,7 +68,7 @@ pub fn get(key: &str) -> Option<&'static str> {
         "shell.toast.folder.tip" => "Show in Folder",
         "shell.toast.delete.tip" => "Move to Recycle Bin",
         "shell.toast.dismiss" => "Dismiss",
-        "shell.toast.ocr_missing" => "Copy Text Needs an OCR Language in Windows Settings",
+        "shell.toast.ocr_missing" => "Needs an OCR Language in Windows Settings",
         "shell.tray.update_check_on" => "Update Checks On",
         "shell.tray.stop_recording" => "Stop Recording",
         "shell.tray.offline" => "Offline",
@@ -83,8 +83,8 @@ pub fn get(key: &str) -> Option<&'static str> {
         "shell.pin.close.tip" => "Close Pin (Esc)",
         "shell.pin.edit.tip" => "Open in Editor (Double-Click)",
         "shell.pin.window_title" => "Pin: {name}",
-        "shell.notice.no_last_region" => "No Region Remembered Yet: Select One",
-        "shell.notice.last_region_off_screen" => "Last Region Is Off Screen: Select a New One",
+        "shell.notice.no_last_region" => "Select a Region First",
+        "shell.notice.last_region_off_screen" => "Last Region Is Off Screen",
         "shell.error.window_capture" => {
             "Windows could not capture that window. Try again, or use Region capture."
         }
@@ -103,7 +103,7 @@ pub fn get(key: &str) -> Option<&'static str> {
         }
         "shell.tray.unavailable" => "Tray Icon Unavailable",
         "shell.tray.unavailable.body" => {
-            "Stinkshot is running but could not create its tray icon. Use the hotkeys or the command line."
+            "Stinkshot is still running. Use the hotkeys or the command line."
         }
         "shell.welcome.title" => "Stinkshot Is Running",
         "shell.star.failed.body" => {
@@ -111,31 +111,29 @@ pub fn get(key: &str) -> Option<&'static str> {
         }
         "shell.star.failed" => "Could Not Update Star",
         "shell.busy.recording" => "Recording in Progress",
-        "shell.busy.recording.capture" => "Stop or finish the recording before taking a capture.",
-        "shell.busy.capture_open" => "Finish or cancel the capture that is already open first.",
+        "shell.busy.recording.capture" => "Finish the recording first.",
+        "shell.busy.capture_open" => "Finish the current capture first.",
         "shell.busy.capture" => "Finish the current capture first.",
-        "shell.busy.recording.edit" => "Stop the recording before editing a capture.",
+        "shell.busy.recording.edit" => "Finish the recording first.",
         "shell.capture.no_image.body" => {
-            "Windows did not hand over the screen image. Try again; if it keeps failing, restart Stinkshot."
+            "Windows did not return the screen image. Try again, or restart Stinkshot if it keeps failing."
         }
         "shell.capture.screen_failed" => "Could Not Capture the Screen",
         "shell.capture.no_window" => "No Window to Capture",
-        "shell.capture.no_window.body" => {
-            "Click the window you want to capture first, then try again."
-        }
+        "shell.capture.no_window.body" => "Click the window first, then try again.",
         "shell.capture.no_monitor.body" => {
-            "The monitor under the cursor was not in the screen image. Move the cursor to the monitor you want and try again."
+            "That monitor was not in the screen image. Move the cursor onto it and try again."
         }
         "shell.ocr.no_text" => "No Text Found",
         "shell.ocr.empty" => "The selection was empty.",
         "shell.selection.lost" => "Could Not Read the Selection",
-        "shell.selection.lost.body" => "The screen snapshot was lost; try again.",
+        "shell.selection.lost.body" => "The screen snapshot was lost. Try again.",
         "shell.selection.too_small" => "Selection Too Small",
         "shell.selection.too_small.scroll" => "Select a larger area to scroll-capture.",
         "shell.selection.too_small.record" => "Select a larger area to record.",
-        "shell.busy.recording.record" => "Finish the current recording first.",
+        "shell.busy.recording.record" => "Finish the recording first.",
         "shell.record.temp_failed.body" => {
-            "The history folder could not be prepared for the recording. Check the folder in Settings > History."
+            "The history folder is not ready for recording. Check it in Settings > History."
         }
         "shell.record.start_failed" => "Could Not Start Recording",
         "shell.record.problem.body" => "The recorder hit a problem.",
@@ -145,9 +143,7 @@ pub fn get(key: &str) -> Option<&'static str> {
         "shell.record.disk_low.body" => "Recording stopped to keep what was recorded.",
         "shell.capture.window_failed" => "Could Not Capture the Window",
         "shell.scroll.stopped" => "Scrolling Capture Stopped Early",
-        "shell.scroll.stopped.body" => {
-            "The page could not be matched any further; kept what was captured."
-        }
+        "shell.scroll.stopped.body" => "The page stopped matching. What was captured is kept.",
         "shell.scroll.failed.body" => {
             "Nothing could be captured from that area. Try again with the page scrolled to the top."
         }
@@ -160,14 +156,12 @@ pub fn get(key: &str) -> Option<&'static str> {
         "shell.record.recovered.body" => "An unsaved recording was added to History.",
         "shell.record.at_60" => "Recording at 60 FPS",
         "shell.record.mic_failed" => "Microphone Not Added",
-        "shell.record.mic_failed.body" => {
-            "The microphone could not be opened. The recording goes on without it."
-        }
+        "shell.record.mic_failed.body" => "It could not be opened. Recording continues without it.",
         "shell.record.start_failed.body" => {
             "Windows could not start the screen recorder. Try a smaller area or restart Stinkshot."
         }
         "shell.export.failed.body" => "The recording could not be exported.",
-        "shell.export.failed.tail" => "The trim window is still open, so you can try Save again.",
+        "shell.export.failed.tail" => "The trim window is still open. Try Save again.",
         "shell.export.failed" => "Could Not Export the Recording",
         "shell.export.partial.body" => "Part of the export failed.",
         "shell.export.partial.tail" => "What was saved is in History.",
@@ -183,7 +177,7 @@ pub fn get(key: &str) -> Option<&'static str> {
         "shell.saved.history" => "Saved to History",
         "shell.update.off" => "Update Checks Are Off",
         "shell.update.off.body" => {
-            "Turn them on in Settings > Privacy. They are the only network feature."
+            "Turn them on in Settings > Privacy. They are the only network request."
         }
         "shell.update.available.body" => "Download it from stinkshot.com.",
         "shell.update.current" => "Stinkshot Is Up to Date",
@@ -242,7 +236,7 @@ pub fn get(key: &str) -> Option<&'static str> {
         "shell.hud.webcam" => "Webcam",
         "shell.hud.show_input" => "Show Clicks and Keys",
         "shell.hud.stop" => "Stop",
-        "shell.hud.problem" => "Recording Problem: Saving What Was Recorded",
+        "shell.hud.problem" => "Recording Problem · Saving",
         "shell.trim.discard_prompt" => "Discard This Recording?",
         "shell.trim.discard_prompt.body" => "It has not been saved yet. This cannot be undone.",
         "shell.trim.save_prompt" => "Save This Recording?",
@@ -269,10 +263,10 @@ pub fn get(key: &str) -> Option<&'static str> {
         "shell.scroll.stitching" => "Stitching Frame {n}",
         "shell.internal.title" => "Something Went Wrong",
         "shell.clipboard.busy_saved" => {
-            "Another app is using the clipboard. The capture is saved; use Copy on the toast or in History."
+            "Another app is using the clipboard. The capture is saved. Use Copy on the toast or in History."
         }
         "shell.clipboard.refused_saved" => {
-            "Windows did not accept the image on the clipboard. The capture is saved in History; try Copy there."
+            "Windows refused the image on the clipboard. The capture is in History. Try Copy there."
         }
         "shell.clipboard.refused" => {
             "Windows did not accept it on the clipboard. Try again in a moment."
@@ -300,9 +294,7 @@ pub fn get(key: &str) -> Option<&'static str> {
         "shell.save_as.failed" => "Could Not Save the File",
         "shell.save_as.failed.body" => "The file could not be written there. Try another folder.",
         "shell.save_as.open_failed" => "Could Not Open Save As",
-        "shell.save_as.open_failed.body" => {
-            "The Save As dialog could not open. The capture is still in History."
-        }
+        "shell.save_as.open_failed.body" => "The capture is still in History.",
         "shell.ocr.nothing" => "Nothing readable in the selection.",
         "shell.ocr.copy_failed" => "Could Not Copy Text",
         "shell.ocr.failed" => "Could Not Recognize Text",
@@ -365,13 +357,13 @@ pub fn get(key: &str) -> Option<&'static str> {
             "Global hotkeys are unavailable. Use the tray icon, or restart Stinkshot."
         }
         "shell.hotkey.prtsc_failed" => {
-            "Windows did not let Stinkshot take over PrtSc, so it may still open Snipping Tool. Turn off Take Over PrintScreen or try again."
+            "Could not take over PrtSc. It may still open Snipping Tool. Turn off Take Over PrintScreen or try again."
         }
         "shell.hotkey.snip_thread_failed" => {
             "Stinkshot could not start its shortcut listener. Restart Stinkshot and try again."
         }
         "shell.hotkey.snip_failed" => {
-            "Windows did not let Stinkshot listen for Win+Shift+S and Win+Shift+R, so they still open Snipping Tool. Turn the option off and on again, or restart Stinkshot."
+            "Win+Shift+S and Win+Shift+R still open Snipping Tool. Turn Replace Snipping Tool off and on, or restart Stinkshot."
         }
         "shell.hotkey.not_set" => "Not Set",
         "shell.toggle.on" => "On",
@@ -385,7 +377,7 @@ pub fn get(key: &str) -> Option<&'static str> {
             "{key} ({action}) {phrase}. Record it again in Settings > Hotkeys."
         }
         "shell.hotkey.duplicate" => {
-            "{key} {phrase} {other} and {action}; only {other} works. Change one of them in Settings > Hotkeys."
+            "{key} {phrase} {other} and {action}. Only {other} works. Change one in Settings > Hotkeys."
         }
         "shell.hotkey.in_use" => {
             "{key} ({action}) {phrase}. Close that program or pick another key in Settings > Hotkeys."
@@ -412,9 +404,9 @@ pub fn get(key: &str) -> Option<&'static str> {
             "Set a region hotkey in Settings > Hotkeys, or use the tray icon."
         }
         "shell.tour.tray.title" => "It Lives in the Tray",
-        "shell.tour.tray.body" => "Click the tray icon to capture, double-click for History.",
-        "shell.tour.privacy.title" => "Nothing Ever Leaves Your PC",
-        "shell.tour.privacy.body" => "Nothing is uploaded or tracked. Update checks are opt-in.",
+        "shell.tour.tray.body" => "Click the tray icon to capture. Double-click for History.",
+        "shell.tour.privacy.title" => "Your Captures Never Leave Your PC",
+        "shell.tour.privacy.body" => "No uploads, accounts or telemetry. Update checks are opt-in.",
         "shell.tour.files.title" => "Where Captures Go",
         "shell.tour.files.body" => {
             "Saved here and listed in History. Change it in Settings > History."

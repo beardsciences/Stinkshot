@@ -53,8 +53,8 @@ pub enum HeadlessJob {
 #[command(
     name = "stinkshot",
     version,
-    about = "Local-first screenshot and screen recording for Windows",
-    long_about = "Local-first screenshot and screen recording for Windows.\n\nWith no arguments Stinkshot starts in the tray. Subcommands trigger an action in the running instance (starting it if needed); `full --out`, `window --out` and `ocr --file` run headless and exit."
+    about = "Local-first screenshots and screen recording for Windows",
+    long_about = "Local-first screenshots and screen recording for Windows.\n\nWith no arguments Stinkshot starts in the tray. Subcommands act on the running instance and start it if needed. `full --out`, `window --out` and `ocr --file` run headless and exit."
 )]
 struct Cli {
     /// Start in the tray only (used by start-with-Windows).
@@ -66,9 +66,9 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Sub {
-    /// Select a region (overlay editor).
+    /// Capture a region.
     Region,
-    /// Capture the foreground window; with --out, headless.
+    /// Capture the foreground window. With --out, runs headless.
     Window {
         /// Write the capture to this file (png, jpg or webp by extension) and exit.
         #[arg(short, long)]
@@ -77,7 +77,7 @@ enum Sub {
         #[arg(long)]
         cursor: bool,
     },
-    /// Capture a full monitor; with --out, headless.
+    /// Capture a full monitor. With --out, runs headless.
     Full {
         /// Write the capture to this file (png, jpg or webp by extension) and exit.
         #[arg(short, long)]
@@ -91,7 +91,7 @@ enum Sub {
     },
     /// Scrolling capture.
     Scroll,
-    /// Select a region and copy its text; with --file, print the text of an image and exit.
+    /// Select a region and copy its text. With --file, print an image's text and exit.
     Ocr {
         #[arg(short, long)]
         file: Option<PathBuf>,
@@ -106,9 +106,9 @@ enum Sub {
     },
     /// Pick a color anywhere on screen and copy it (hex, RGB or HSL).
     PickColor,
-    /// Record the screen as MP4 (toggles: stops a running recording).
+    /// Record the screen as MP4. Run again to stop.
     Record,
-    /// Record the screen as GIF (toggles: stops a running recording).
+    /// Record the screen as GIF. Run again to stop.
     Gif,
     /// Open the history window.
     History,
@@ -118,8 +118,8 @@ enum Sub {
         #[arg(long)]
         page: Option<String>,
     },
-    /// Check for a newer release and install it (needs Settings > Privacy > Check for
-    /// Updates on).
+    /// Check for a newer release and install it. Needs Check for Updates on in Settings >
+    /// Privacy.
     Update,
     /// Ask the running instance to exit and wait for it (used by the installer).
     Quit,

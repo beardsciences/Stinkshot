@@ -125,6 +125,8 @@ pub fn lookup(key: &'static str) -> &'static str {
     });
     match lang() {
         Lang::En => base,
+        // An empty string means "no text" (a settings row without a description).
+        Lang::Pseudo if base.is_empty() => base,
         Lang::Pseudo => pseudo_cached(key, base),
     }
 }
@@ -253,5 +255,62 @@ mod tests {
         for (_, label) in CHOICES {
             assert!(english(label).is_some(), "{label}");
         }
+    }
+
+    /// House rules for UI text: short sentences that state one fact, no em dashes, no
+    /// semicolon joins, no words that pad without adding anything.
+    #[test]
+    fn english_copy_follows_the_house_rules() {
+        const FILLER: &[&str] = &[
+            "seamless",
+            "effortless",
+            "powerful",
+            "robust",
+            "leverage",
+            "simply",
+            "easily",
+            "in order to",
+            "please note",
+            "and more",
+            "blazing",
+            "intuitive",
+        ];
+        const MAX_WORDS: usize = 24;
+        let mut bad = Vec::new();
+        for keys in [
+            en::settings::KEYS,
+            en::history::KEYS,
+            en::overlay::KEYS,
+            en::shell::KEYS,
+        ] {
+            for k in keys {
+                let s = english(k).unwrap_or_default();
+                if s.contains('\u{2014}') {
+                    bad.push(format!("{k}: em dash"));
+                }
+                if s.contains("; ") {
+                    bad.push(format!("{k}: semicolon join"));
+                }
+                let low = s.to_lowercase();
+                for f in FILLER {
+                    let padded = low.split(|c: char| !c.is_alphanumeric() && c != ' ');
+                    if padded.clone().any(|part| {
+                        part.split(' ')
+                            .collect::<Vec<_>>()
+                            .windows(f.split(' ').count())
+                            .any(|w| w.join(" ") == *f)
+                    }) {
+                        bad.push(format!("{k}: filler \"{f}\""));
+                    }
+                }
+                for sentence in s.split(['.', '?', '!', '\n']) {
+                    let n = sentence.split_whitespace().count();
+                    if n > MAX_WORDS {
+                        bad.push(format!("{k}: {n}-word sentence"));
+                    }
+                }
+            }
+        }
+        assert!(bad.is_empty(), "{}", bad.join("\n"));
     }
 }

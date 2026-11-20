@@ -758,7 +758,7 @@ annotations), Edit in Window button with three regions, and repeat-last-region a
   selects all, Ctrl+C or the Copy Text button under the last selected word copies (spaces in a
   line, newlines between lines), Esc clears the selection. The cache follows the base `Arc`:
   a new region or crop reads again, switching tools keeps it. Notices: "No Text Found",
-  "Could Not Read Text", "Select Text Needs an OCR Language in Windows Settings".
+  "Could Not Read Text", "Needs an OCR Language in Windows Settings".
 - **#13 Snapped regions stay on their element.** A region made by clicking a highlighted
   window or element (first or added) gets a `selection::SnapTie` with the hover chain
   (`Overlay::hover_chain`, innermost first, canvas px). Moving and resizing it stay inside the

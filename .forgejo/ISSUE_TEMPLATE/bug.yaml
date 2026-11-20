@@ -1,0 +1,40 @@
+name: Bug Report
+about: Something does not work the way it should.
+labels:
+  - bug
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Stinkshot Version
+      description: Settings > About.
+      placeholder: 0.1.5
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows Version
+      description: Run winver.
+      placeholder: Windows 11 24H2 (26100)
+    validations:
+      required: true
+  - type: input
+    id: display
+    attributes:
+      label: Monitors and GPU
+      description: Resolution, scaling and HDR per monitor. Graphics card.
+      placeholder: 4K at 150% with HDR, 1440p at 100%, RTX 3060 Ti
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps
+      description: What you did, what happened and what you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: Settings > About > Show Log. Paste the lines around the time it happened. Remove anything private.
+      render: text
