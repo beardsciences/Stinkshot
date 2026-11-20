@@ -33,8 +33,13 @@ jobs:
       - name: Rust toolchain
         shell: pwsh
         run: |
-          rustup toolchain install stable --profile minimal --component rustfmt,clippy --no-self-update
-          rustup default stable
+          # Use the version in Cargo.toml (rust-version), the one the code is developed on.
+          # Newer clippy releases add lints, which would fail this job for no code change.
+          $m = [regex]::Match((Get-Content -Raw Cargo.toml), '(?m)^rust-version\s*=\s*"([^"]+)"')
+          if (-not $m.Success) { throw 'rust-version not found in Cargo.toml' }
+          $v = $m.Groups[1].Value
+          rustup toolchain install $v --profile minimal --component rustfmt,clippy --no-self-update
+          rustup default $v
           rustc --version
 
       - name: Check
