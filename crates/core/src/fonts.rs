@@ -94,6 +94,8 @@ struct FallbackSet {
     faces: Vec<FallbackFace>,
 }
 
+// Windows fallback faces; other systems get their own lists later.
+#[cfg_attr(not(windows), allow(dead_code))]
 type FallbackEntry = (
     &'static str,
     &'static [&'static str],
@@ -101,6 +103,8 @@ type FallbackEntry = (
 );
 
 /// Fallback families in default order (name, regular files, bold files).
+// Windows fallback faces; other systems get their own lists later.
+#[cfg_attr(not(windows), allow(dead_code))]
 const FALLBACKS: [FallbackEntry; 6] = [
     ("Microsoft YaHei", &["msyh.ttc"], &["msyhbd.ttc"]),
     (
@@ -140,6 +144,7 @@ fn read_cached(path: &Path) -> Option<&'static [u8]> {
 }
 
 impl FallbackSet {
+    #[cfg_attr(not(windows), allow(dead_code))]
     fn system(dir: PathBuf) -> FallbackSet {
         FallbackSet {
             dir: Some(dir),
@@ -230,6 +235,7 @@ impl Fonts {
     /// Load from `%WINDIR%\Fonts`. Regular: Segoe UI Variable, then Segoe UI, then Arial.
     /// Bold: Segoe UI Bold, then Arial Bold, then the regular face. CJK / emoji fallbacks
     /// load on first use.
+    #[cfg(windows)]
     pub fn load_system() -> anyhow::Result<Fonts> {
         let dir = windows_fonts_dir();
         let regular = first_loadable(&dir, &["SegUIVar.ttf", "segoeui.ttf", "arial.ttf"])
@@ -238,6 +244,18 @@ impl Fonts {
         let mut f = Self::from_static(regular, bold)?;
         f.fallback = Arc::new(FallbackSet::system(dir));
         Ok(f)
+    }
+
+    /// Other systems: the first installed face from `OTHER_OS_FONTS` (macOS ships Arial,
+    /// Linux distributions DejaVu, Noto or Liberation). No CJK or emoji fallbacks yet.
+    #[cfg(not(windows))]
+    pub fn load_system() -> anyhow::Result<Fonts> {
+        let found = OTHER_OS_FONTS.iter().find_map(|(regular, bold)| {
+            let r = map_font_file(std::path::Path::new(regular))?;
+            Some((r, map_font_file(std::path::Path::new(bold)).unwrap_or(r)))
+        });
+        let (regular, bold) = found.context("no usable system font found")?;
+        Self::from_static(regular, bold)
     }
 
     /// From owned font data (tests), without fallbacks. The bytes are leaked: fonts live for
@@ -422,6 +440,32 @@ impl Fonts {
     }
 }
 
+/// (regular, bold) font files tried in order on macOS and Linux.
+#[cfg(not(windows))]
+const OTHER_OS_FONTS: &[(&str, &str)] = &[
+    (
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+    ),
+    (
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    ),
+    (
+        "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
+    ),
+    (
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+    ),
+    (
+        "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",
+        "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans-Bold.ttf",
+    ),
+];
+
+#[cfg_attr(not(windows), allow(dead_code))]
 fn windows_fonts_dir() -> PathBuf {
     let win = std::env::var_os("WINDIR")
         .or_else(|| std::env::var_os("SystemRoot"))
@@ -431,13 +475,15 @@ fn windows_fonts_dir() -> PathBuf {
     win.join("Fonts")
 }
 
+// Windows fallback faces; other systems get their own lists later.
+#[cfg_attr(not(windows), allow(dead_code))]
 fn first_loadable(dir: &std::path::Path, names: &[&str]) -> Option<&'static [u8]> {
     names.iter().find_map(|name| map_font_file(&dir.join(name)))
 }
 
 #[cfg(test)]
 pub(crate) fn test_fonts() -> Fonts {
-    Fonts::load_system().expect("system fonts (Windows) are required for these tests")
+    Fonts::load_system().expect("system fonts are required for these tests")
 }
 
 #[cfg(test)]

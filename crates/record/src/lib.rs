@@ -18,19 +18,75 @@
 //! - Pause/resume: while paused nothing is written and the timeline offset grows, so the
 //!   output is one continuous file without a gap.
 //! - Dimensions are rounded down to even numbers (H.264 4:2:0 requirement).
+//!
+//! # Per-OS boundary
+//!
+//! The public API (names and signatures) is the same on every OS; only Windows records
+//! for now:
+//!
+//! - Windows implementations stay in place (`src/<module>.rs`) and only build on Windows.
+//! - On other OSes each such module is swapped for a stand-in in `src/unsupported/` (see the
+//!   `path` attributes below). Stand-ins never panic: calls that return a `Result` return
+//!   an "is not supported on this OS yet" error, device lists are empty and
+//!   `primary_monitor_rect` is None. Types that only come from a failed constructor
+//!   (`Recorder`, capturer, encoder, reader, webcam) cannot be created there. So
+//!   `Recorder::start`, `probe`, `thumbnails`, `frame_at`, `trim`, `to_gif` and `decode_all`
+//!   all return an error.
+//! - Data types and pure logic that do not depend on the OS live once in `src/portable/`
+//!   and are re-exported from the module that always held them, with their unit tests, so
+//!   those tests run on every OS.
+//! - `convert`, `dsp`, `gifenc`, `media`, `overlay` and `timeline` have no OS calls and
+//!   build everywhere as they are (`gifenc` and `media` sit on the reader and encoder).
+//!
+//! To give a module a real macOS or Linux implementation, add a file for it with the same
+//! items (for example `src/macos/encoder.rs`, starting with
+//! `pub use crate::portable::encoder::*;`) and narrow the stand-in to the OSes still
+//! missing:
+//!
+//! ```ignore
+//! #[cfg_attr(target_os = "macos", path = "macos/encoder.rs")]
+//! #[cfg_attr(not(any(windows, target_os = "macos")), path = "unsupported/encoder.rs")]
+//! mod encoder;
+//! ```
+//!
+//! Move any logic the new file shares with the Windows one into `portable/` first. An
+//! OS-specific dependency goes under `[target.'cfg(..)'.dependencies]` in Cargo.toml.
 
+/// OS-independent types and logic, re-exported by the per-OS modules.
+mod portable {
+    pub(crate) mod audio;
+    pub(crate) mod capture;
+    pub(crate) mod encoder;
+    pub(crate) mod mf;
+    pub(crate) mod mfread;
+    pub(crate) mod recorder;
+}
+
+// The pure modules below are mostly used by the Windows recorder so far, so parts of them
+// have no caller elsewhere.
+#[cfg_attr(not(windows), path = "unsupported/audio.rs")]
 mod audio;
+#[cfg_attr(not(windows), path = "unsupported/capture.rs")]
 mod capture;
+#[cfg_attr(not(windows), allow(dead_code))]
 mod convert;
+#[cfg_attr(not(windows), allow(dead_code))]
 mod dsp;
+#[cfg_attr(not(windows), path = "unsupported/encoder.rs")]
 mod encoder;
 mod gifenc;
 mod media;
+#[cfg_attr(not(windows), path = "unsupported/mf.rs")]
 mod mf;
+#[cfg_attr(not(windows), path = "unsupported/mfread.rs")]
 mod mfread;
+#[cfg_attr(not(windows), allow(dead_code))]
 mod overlay;
+#[cfg_attr(not(windows), path = "unsupported/recorder.rs")]
 mod recorder;
+#[cfg_attr(not(windows), allow(dead_code))]
 mod timeline;
+#[cfg_attr(not(windows), path = "unsupported/webcam.rs")]
 mod webcam;
 
 use std::path::{Path, PathBuf};

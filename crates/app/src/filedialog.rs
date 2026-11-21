@@ -3,28 +3,37 @@
 
 use std::path::{Path, PathBuf};
 
+#[cfg(windows)]
 use anyhow::Context;
 use stinkshot_core::image::ImageFormat;
+#[cfg(windows)]
 use windows::Win32::Foundation::HWND;
+#[cfg(windows)]
 use windows::Win32::System::Com::{
     CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
     CoTaskMemFree, CoUninitialize,
 };
+#[cfg(windows)]
 use windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC;
+#[cfg(windows)]
 use windows::Win32::UI::Shell::{
     FOS_FORCEFILESYSTEM, FOS_NOCHANGEDIR, FOS_OVERWRITEPROMPT, FOS_PATHMUSTEXIST, FileSaveDialog,
     IFileSaveDialog, IShellItem, SHCreateItemFromParsingName, SIGDN_FILESYSPATH,
 };
+#[cfg(windows)]
 use windows::core::{HRESULT, HSTRING, PCWSTR, w};
 
+#[cfg(windows)]
 use crate::l10n::tr;
 
 /// HRESULT_FROM_WIN32(ERROR_CANCELLED)
+#[cfg(windows)]
 const CANCELLED: HRESULT = HRESULT(0x800704C7u32 as i32);
 
 /// Show a Save As dialog for an image. `default_stem` is the suggested file name without
 /// extension; `format` selects the initial filter. Returns None if the user cancelled. The
 /// returned path always carries an extension matching one of the offered filters.
+#[cfg(windows)]
 pub fn save_image(
     default_stem: &str,
     format: ImageFormat,
@@ -42,6 +51,7 @@ pub fn save_image(
     }
 }
 
+#[cfg(windows)]
 unsafe fn show(
     default_stem: &str,
     format: ImageFormat,
@@ -105,6 +115,16 @@ unsafe fn show(
         CoTaskMemFree(Some(name.0 as *const _));
         Ok(Some(PathBuf::from(path?)))
     }
+}
+
+/// No Save As dialog off Windows yet: an error, so callers report it like a failed dialog.
+#[cfg(not(windows))]
+pub fn save_image(
+    _default_stem: &str,
+    _format: ImageFormat,
+    _start_dir: Option<&Path>,
+) -> anyhow::Result<Option<PathBuf>> {
+    anyhow::bail!("the Save As dialog is not supported on this OS yet")
 }
 
 /// The image format implied by a file extension (png default).

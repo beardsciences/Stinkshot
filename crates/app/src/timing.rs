@@ -20,6 +20,7 @@ pub fn ms() -> f64 {
 }
 
 /// Private bytes (commit charge) of this process in MB, what Task Manager calls "Commit size".
+#[cfg(windows)]
 pub fn private_mb() -> f64 {
     use windows::Win32::System::ProcessStatus::{
         GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS, PROCESS_MEMORY_COUNTERS_EX,
@@ -45,8 +46,21 @@ pub fn private_mb() -> f64 {
     }
 }
 
+/// Not measured off Windows yet: 0.
+#[cfg(not(windows))]
+pub fn private_mb() -> f64 {
+    0.0
+}
+
+/// Not measured off Windows yet: 0.
+#[cfg(not(windows))]
+pub fn since_process_creation_ms() -> f64 {
+    0.0
+}
+
 /// Milliseconds from process creation (as the kernel recorded it) to now: what loading the exe
 /// and its DLLs cost before `main` ran, when called first thing.
+#[cfg(windows)]
 pub fn since_process_creation_ms() -> f64 {
     use windows::Win32::Foundation::FILETIME;
     use windows::Win32::System::SystemInformation::GetSystemTimePreciseAsFileTime;

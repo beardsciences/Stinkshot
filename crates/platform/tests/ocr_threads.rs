@@ -4,6 +4,8 @@
 //! apartment down while windows-rs still held cached WinRT factories. Run with:
 //! `cargo test -p stinkshot-platform --test ocr_threads -- --ignored`
 
+#![cfg(windows)]
+
 use stinkshot_core::Rgba;
 use stinkshot_platform::ocr::{OcrEngine, WindowsOcr};
 

@@ -1070,6 +1070,13 @@ pub fn recover_recordings(env: &Env, files: Vec<PathBuf>) {
     });
 }
 
+/// Other systems have no exclusive open: a file counts as not in use.
+#[cfg(not(windows))]
+fn opens_exclusively(_path: &Path) -> bool {
+    true
+}
+
+#[cfg(windows)]
 fn opens_exclusively(path: &Path) -> bool {
     use std::os::windows::fs::OpenOptionsExt;
     std::fs::OpenOptions::new()
@@ -1602,6 +1609,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(windows)]
     fn a_discarded_recording_held_open_does_not_come_back() {
         use std::os::windows::fs::OpenOptionsExt;
         let dir = std::env::temp_dir().join(format!("stinkshot-discard-{}", std::process::id()));

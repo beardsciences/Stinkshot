@@ -15,14 +15,7 @@ use windows::core::GUID;
 
 use crate::dsp::{OUT_RATE, Resampler, SampleFormat, SourceQueue, decode_to_stereo};
 use crate::mf::ComGuard;
-
-#[derive(Clone, Debug)]
-pub enum Source {
-    /// Default render device, captured in loopback mode.
-    Loopback,
-    /// Capture device by friendly name (None = default).
-    Microphone(Option<String>),
-}
+pub use crate::portable::audio::*;
 
 struct Format {
     rate: u32,

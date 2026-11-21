@@ -85,10 +85,17 @@ const LOGO_PREWARM_DELAY: Duration = Duration::from_secs(30);
 
 /// The system display scale (the primary monitor's at sign-in), for work done before any
 /// window is on screen.
+#[cfg(windows)]
 fn system_scale() -> f32 {
     // SAFETY: no arguments; returns the system DPI.
     let dpi = unsafe { windows::Win32::UI::HiDpi::GetDpiForSystem() };
     if dpi == 0 { 1.0 } else { dpi as f32 / 96.0 }
+}
+
+/// Not known off Windows yet: 1.
+#[cfg(not(windows))]
+fn system_scale() -> f32 {
+    1.0
 }
 
 /// After a double click is handled, tray single clicks are ignored this long: the button-up of

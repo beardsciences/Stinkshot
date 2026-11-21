@@ -9,20 +9,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::BOOL;
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct Monitor {
-    /// HMONITOR value.
-    pub handle: isize,
-    /// Full monitor rect, physical px, virtual-desktop coords.
-    pub rect: PxRect,
-    /// Work area (excludes taskbar).
-    pub work: PxRect,
-    /// DPI scale, 1.0 = 96 dpi.
-    pub scale: f32,
-    /// Device name like "\\.\DISPLAY1".
-    pub name: String,
-    pub primary: bool,
-}
+pub use crate::portable::monitors::*;
 
 pub(crate) fn rect_from_win(r: &RECT) -> PxRect {
     PxRect::new(

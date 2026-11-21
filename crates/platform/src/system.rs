@@ -31,6 +31,9 @@ use crate::util::{
     reg_delete_value, reg_get_dword, reg_set_dword, reg_set_string, reg_value_exists, wide, wide_os,
 };
 
+pub use crate::portable::system::{EndSessionPhase, SessionEvent};
+use crate::portable::system::{decode_args, encode_args};
+
 const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 fn run_value() -> String {
     format!("StinkShot{}", stinkshot_core::config::profile_suffix())
@@ -271,20 +274,6 @@ pub fn acquire_single_instance() -> Option<InstanceGuard> {
     }
 }
 
-fn encode_args(args: &[String]) -> Vec<u8> {
-    args.join("\0").into_bytes()
-}
-
-fn decode_args(bytes: &[u8]) -> Vec<String> {
-    if bytes.is_empty() {
-        return Vec::new();
-    }
-    String::from_utf8_lossy(bytes)
-        .split('\0')
-        .map(str::to_owned)
-        .collect()
-}
-
 /// Forward CLI args to the running instance via WM_COPYDATA to the hidden window titled
 /// "StinkShot.IPC". Returns false if no instance window was found.
 pub fn send_to_running_instance(args: &[String]) -> bool {
@@ -414,35 +403,6 @@ pub fn start_ipc_listener(tx: Sender<Vec<String>>) -> anyhow::Result<()> {
     ready_rx
         .recv_timeout(std::time::Duration::from_secs(5))
         .map_err(|e| anyhow::anyhow!("IPC thread did not start: {e}"))?
-}
-
-/// A system event after which the cached capture session is likely invalid.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SessionEvent {
-    /// The session was unlocked or reconnected to the console (left the secure desktop).
-    Unlock,
-    /// A display was added, removed, or changed mode.
-    DisplayChange,
-    /// Resumed from sleep or hibernation.
-    Resume,
-    /// Windows is shutting down, restarting or signing the user out (`WM_ENDSESSION` with
-    /// the session really ending). The end-session handler has already run.
-    EndSession,
-}
-
-/// Step of a Windows shutdown, restart or sign-out, passed to the handler set with
-/// `set_end_session_handler`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EndSessionPhase {
-    /// `WM_QUERYENDSESSION`: the session is about to end (it can still be cancelled). Start
-    /// finishing work here and return true when that needs time: Windows is then given the
-    /// handler's reason text and waits instead of ending the process after a few seconds.
-    Query,
-    /// `WM_ENDSESSION`, session ending: the last chance to do exit work, synchronously. The
-    /// process may be ended as soon as the handler returns.
-    End,
-    /// `WM_ENDSESSION`, the shutdown was cancelled: keep running.
-    Cancelled,
 }
 
 struct EndSessionHandler {
@@ -683,13 +643,6 @@ mod tests {
         assert!(may_restore_global(true, false, Some(0)));
         assert!(!may_restore_global(true, false, Some(1)));
         assert!(!may_restore_global(true, false, None));
-    }
-
-    #[test]
-    fn args_roundtrip() {
-        let a = vec!["region".to_string(), "--delay".to_string(), "3".to_string()];
-        assert_eq!(decode_args(&encode_args(&a)), a);
-        assert!(decode_args(&encode_args(&[])).is_empty());
     }
 
     #[test]

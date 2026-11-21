@@ -3,16 +3,24 @@
 //! build.rs from `icon_gen`) at the exact small/big sizes for the window's DPI so the title
 //! bar, taskbar and Alt+Tab are crisp instead of a scaled bitmap.
 
+#[cfg(windows)]
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
+#[cfg(windows)]
+use std::sync::Mutex;
+use std::sync::{Arc, OnceLock};
 
+#[cfg(windows)]
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+#[cfg(windows)]
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+#[cfg(windows)]
 use windows::Win32::UI::HiDpi::{GetDpiForWindow, GetSystemMetricsForDpi};
+#[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{
     ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_DEFAULTCOLOR, LoadImageW, SM_CXICON, SM_CXSMICON,
     SendMessageW, WM_SETICON,
 };
+#[cfg(windows)]
 use windows::core::PCWSTR;
 
 use crate::icon_gen;
@@ -35,6 +43,7 @@ pub fn window_icon() -> Arc<egui::IconData> {
 }
 
 /// Loaded icon handles by pixel size (kept for the life of the process).
+#[cfg(windows)]
 fn resource_icon(px: i32) -> Option<isize> {
     static CACHE: OnceLock<Mutex<HashMap<i32, isize>>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
@@ -64,6 +73,7 @@ fn resource_icon(px: i32) -> Option<isize> {
 
 /// Give a window the exe's icon at its DPI and return that DPI (pass it to `refresh_native`
 /// later). Best effort: on failure egui's icon stays.
+#[cfg(windows)]
 pub fn apply_native(hwnd: stinkshot_platform::Hwnd) -> u32 {
     let hwnd = HWND(hwnd as *mut _);
     // SAFETY: plain queries and messages to a window we own.
@@ -91,6 +101,7 @@ pub fn apply_native(hwnd: stinkshot_platform::Hwnd) -> u32 {
 /// `last_dpi` was recorded (e.g. History dragged from a 150% to a 100% monitor), so Windows
 /// does not scale the old frames. Cheap enough to call every frame: one DPI query, and the
 /// handles are cached by size.
+#[cfg(windows)]
 pub fn refresh_native(hwnd: stinkshot_platform::Hwnd, last_dpi: &mut u32) {
     // SAFETY: plain query on a window we own.
     let dpi = unsafe { GetDpiForWindow(HWND(hwnd as *mut _)) }.max(96);
@@ -98,3 +109,12 @@ pub fn refresh_native(hwnd: stinkshot_platform::Hwnd, last_dpi: &mut u32) {
         *last_dpi = apply_native(hwnd);
     }
 }
+
+/// Off Windows the egui window icon is all there is: nothing to swap in. Returns 96.
+#[cfg(not(windows))]
+pub fn apply_native(_hwnd: stinkshot_platform::Hwnd) -> u32 {
+    96
+}
+
+#[cfg(not(windows))]
+pub fn refresh_native(_hwnd: stinkshot_platform::Hwnd, _last_dpi: &mut u32) {}

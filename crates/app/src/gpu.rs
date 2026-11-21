@@ -310,15 +310,19 @@ pub fn wait_for_predecessor() {
     let Some(pid) = pid else {
         return;
     };
-    use windows::Win32::Foundation::CloseHandle;
-    use windows::Win32::System::Threading::{
-        OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject,
-    };
-    // SAFETY: the handle is checked and closed; waiting on a process handle is harmless.
-    unsafe {
-        if let Ok(h) = OpenProcess(PROCESS_SYNCHRONIZE, false, pid) {
-            let _ = WaitForSingleObject(h, 10_000);
-            let _ = CloseHandle(h);
+    // Wait for the failed process to exit (Windows only so far).
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::CloseHandle;
+        use windows::Win32::System::Threading::{
+            OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject,
+        };
+        // SAFETY: the handle is checked and closed; waiting on a process handle is harmless.
+        unsafe {
+            if let Ok(h) = OpenProcess(PROCESS_SYNCHRONIZE, false, pid) {
+                let _ = WaitForSingleObject(h, 10_000);
+                let _ = CloseHandle(h);
+            }
         }
     }
     log::info!("restarted after a failure in process {pid}");

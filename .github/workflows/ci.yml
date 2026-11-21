@@ -45,3 +45,43 @@ jobs:
       - name: Check
         shell: pwsh
         run: ./scripts/check.ps1 -NoAudit
+
+  # Keeps the code building on the next platforms (docs/notes/cross-platform.md). The
+  # portable crates are tested for real. The platform-specific ones only have stand-ins
+  # off Windows so far, so the workspace is type-checked there, not run.
+  portable:
+    if: github.server_url == 'https://github.com' && github.repository == 'beardsciences/stinkshot'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Rust toolchain
+        shell: bash
+        run: |
+          v=$(sed -n 's/^rust-version *= *"\([^"]*\)".*/\1/p' Cargo.toml | head -1)
+          test -n "$v" || { echo 'rust-version not found in Cargo.toml'; exit 1; }
+          rustup toolchain install "$v" --profile minimal --component clippy --no-self-update
+          rustup default "$v"
+          rustc --version
+
+      - name: Linux packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgtk-3-dev libxdo-dev \
+            libayatana-appindicator3-dev libxkbcommon-dev libwayland-dev
+
+      - name: Test the portable crates
+        run: cargo test --locked -p stinkshot-core -p stinkshot-stitch -p stinkshot-history -p stinkshot-logo
+
+      - name: Check the workspace
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings

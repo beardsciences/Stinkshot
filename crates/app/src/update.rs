@@ -242,12 +242,16 @@ fn hex(bytes: &[u8]) -> String {
 /// open, no other program can change, replace or remove the file.
 fn open_verified(path: &std::path::Path, inst: &Installer) -> anyhow::Result<std::fs::File> {
     use std::io::Read;
-    use std::os::windows::fs::OpenOptionsExt;
+    let mut opts = std::fs::OpenOptions::new();
+    opts.read(true);
     // Others may read (and so execute) it, but not write, rename or delete it.
-    const FILE_SHARE_READ: u32 = 1;
-    let mut file = std::fs::OpenOptions::new()
-        .read(true)
-        .share_mode(FILE_SHARE_READ)
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_SHARE_READ: u32 = 1;
+        opts.share_mode(FILE_SHARE_READ);
+    }
+    let mut file = opts
         .open(path)
         .context("the installer could not be opened")?;
     let len = file

@@ -806,6 +806,10 @@ fn render_frame(o: &Opts, threads: usize, ctl: &Ctl) -> Option<Vec<u8>> {
 
 /// Below normal while the page is on screen (the UI thread keeps priority), lowest in the
 /// background.
+#[cfg(not(windows))]
+fn set_priority(_ctl: &Ctl) {}
+
+#[cfg(windows)]
 fn set_priority(ctl: &Ctl) {
     use windows::Win32::System::Threading::{
         GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_BELOW_NORMAL, THREAD_PRIORITY_LOWEST,
@@ -1057,6 +1061,13 @@ fn blend(a: &ColorImage, b: &ColorImage, mix: f32) -> ColorImage {
 
 /// True when the foreground window (another window: this one is unfocused) covers `rect`,
 /// this window's rectangle in points. Cheap: one foreground lookup and one rectangle.
+/// Not known off Windows yet: never covered.
+#[cfg(not(windows))]
+fn covered(_rect: Rect, _ppp: f32) -> bool {
+    false
+}
+
+#[cfg(windows)]
 fn covered(rect: Rect, ppp: f32) -> bool {
     use windows::Win32::Foundation::RECT;
     use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowRect, IsIconic};
@@ -1152,6 +1163,12 @@ fn radial(painter: &egui::Painter, c: Pos2, radius: f32, color: Color32, alpha: 
 }
 
 /// Windows "Show animations in Windows" (SPI_GETCLIENTAREAANIMATION); true when unknown.
+#[cfg(not(windows))]
+fn client_area_animation() -> bool {
+    true
+}
+
+#[cfg(windows)]
 fn client_area_animation() -> bool {
     use windows::Win32::UI::WindowsAndMessaging::{
         SPI_GETCLIENTAREAANIMATION, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SystemParametersInfoW,

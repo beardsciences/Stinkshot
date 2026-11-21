@@ -38,6 +38,10 @@ It runs `cargo fmt`, clippy with warnings as errors, the tests, the UI string ru
 real desktop session (screen, clipboard, input hooks). They open windows, so leave the PC alone
 while they run.
 
+The code also has to keep building for Linux and macOS (docs/notes/cross-platform.md). Check
+that from Windows with `scripts/xcheck.ps1`. New Windows API calls go in `crates/platform` or
+`crates/record` behind their per-OS modules, or get a `#[cfg(windows)]` gate in the app.
+
 The minimum Rust version is the `rust-version` in `Cargo.toml`. A bump is noted in the changelog.
 
 To run a dev build beside an installed Stinkshot without touching its config, history,

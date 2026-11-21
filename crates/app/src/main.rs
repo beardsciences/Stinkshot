@@ -34,6 +34,8 @@ mod settings_search;
 mod settings_ui;
 mod shell;
 mod state;
+// Win32 helpers; other systems get a stand-in with the same API.
+#[cfg_attr(not(windows), path = "unsupported/sysutil.rs")]
 mod sysutil;
 mod theme;
 mod timing;
@@ -53,6 +55,10 @@ fn main() -> anyhow::Result<()> {
 /// only, never from the folder the portable exe was unpacked into, where another program
 /// could have planted one. Stinkshot ships no DLLs of its own. The DLLs the exe imports
 /// directly are covered by the linker flag in `build.rs`.
+#[cfg(not(windows))]
+fn restrict_dll_search() {}
+
+#[cfg(windows)]
 fn restrict_dll_search() {
     use windows::Win32::System::LibraryLoader::{
         LOAD_LIBRARY_SEARCH_SYSTEM32, SetDefaultDllDirectories,

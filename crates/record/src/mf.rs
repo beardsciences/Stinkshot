@@ -5,6 +5,8 @@ use windows::Win32::Media::MediaFoundation::*;
 use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx, CoUninitialize};
 use windows::core::GUID;
 
+pub use crate::portable::mf::*;
+
 /// COM initialisation for the current thread (MTA). Tolerates a thread that is already STA.
 pub struct ComGuard(bool);
 
@@ -69,22 +71,6 @@ pub struct SendCom<T>(pub T);
 unsafe impl<T> Send for SendCom<T> {}
 unsafe impl<T> Sync for SendCom<T> {}
 
-pub fn pack(hi: u32, lo: u32) -> u64 {
-    ((hi as u64) << 32) | lo as u64
-}
-
-pub fn unpack(v: u64) -> (u32, u32) {
-    ((v >> 32) as u32, v as u32)
-}
-
-pub fn duration_to_hns(d: std::time::Duration) -> i64 {
-    (d.as_nanos() / 100) as i64
-}
-
-pub fn hns_to_duration(h: i64) -> std::time::Duration {
-    std::time::Duration::from_nanos((h.max(0) as u64).saturating_mul(100))
-}
-
 /// Build a sample holding a copy of `data`.
 pub fn make_sample(data: &[u8], pts_hns: i64, dur_hns: i64) -> Result<IMFSample> {
     unsafe {
@@ -125,23 +111,6 @@ pub fn activate_name(act: &IMFActivate, key: &GUID) -> Option<String> {
         let s = String::from_utf16_lossy(std::slice::from_raw_parts(p.0, len as usize));
         windows::Win32::System::Com::CoTaskMemFree(Some(p.0 as *const _));
         Some(s)
-    }
-}
-
-/// Precise sleep: coarse sleep then a short spin. Windows' default timer granularity is
-/// ~15 ms, so callers also hold a `TimerResolution`.
-pub fn sleep_until(deadline: std::time::Instant) {
-    loop {
-        let now = std::time::Instant::now();
-        if now >= deadline {
-            return;
-        }
-        let left = deadline - now;
-        if left > std::time::Duration::from_millis(2) {
-            std::thread::sleep(left - std::time::Duration::from_millis(1));
-        } else {
-            std::thread::yield_now();
-        }
     }
 }
 

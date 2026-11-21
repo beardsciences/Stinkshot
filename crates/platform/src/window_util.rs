@@ -25,6 +25,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::BOOL;
 
 use crate::Hwnd;
+pub use crate::portable::window_util::*;
 
 fn h(hwnd: Hwnd) -> HWND {
     HWND(hwnd as *mut _)
@@ -133,21 +134,6 @@ pub fn set_topmost(hwnd: Hwnd, topmost: bool) {
     } {
         log::debug!("set_topmost: {e}");
     }
-}
-
-static HIDE_FROM_CAPTURE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
-
-/// Settings > General > Hide Stinkshot From Captures. Windows created afterwards follow it.
-pub fn set_hide_from_capture(on: bool) {
-    HIDE_FROM_CAPTURE.store(on, std::sync::atomic::Ordering::Relaxed);
-}
-
-/// Whether windows that ask to be hidden from capture are hidden: the setting, and in debug
-/// builds not `STINKSHOT_SHOW_IN_CAPTURE=1` (UI reviews screenshot these windows).
-pub fn capture_exclusion_on() -> bool {
-    HIDE_FROM_CAPTURE.load(std::sync::atomic::Ordering::Relaxed)
-        && !(cfg!(debug_assertions)
-            && std::env::var("STINKSHOT_SHOW_IN_CAPTURE").is_ok_and(|v| v == "1"))
 }
 
 /// Hide from screen capture (WDA_EXCLUDEFROMCAPTURE): recording HUD, toasts, overlays,
