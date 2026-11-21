@@ -10,7 +10,7 @@ use stinkshot_core::config::Config;
 use stinkshot_platform::Hwnd;
 
 use crate::actions::Action;
-use crate::l10n::tr;
+use crate::l10n::{lookup, tr};
 use crate::state::{Command, Shared, Surface, SurfaceStatus};
 use crate::theme::{self, Icon, widgets};
 use crate::toast::ui_common as uc;
@@ -40,8 +40,8 @@ const STEPS: [Step; 4] = [Step::Hotkeys, Step::Tray, Step::Privacy, Step::Files]
 impl Step {
     fn icon(self) -> Icon {
         match self {
-            Step::Hotkeys => Icon::Regions,
-            Step::Tray => Icon::Settings,
+            Step::Hotkeys => Icon::Rect,
+            Step::Tray => Icon::Clicks,
             Step::Privacy => Icon::Shield,
             Step::Files => Icon::Folder,
         }
@@ -89,7 +89,32 @@ fn detail_rows(step: Step, cfg: &Config) -> Vec<(String, String)> {
             })
             .collect(),
         Step::Files => vec![(cfg.history_folder().display().to_string(), String::new())],
-        Step::Tray | Step::Privacy => Vec::new(),
+        Step::Tray => [
+            ("settings.help.tray.click", "settings.help.tray.click.what"),
+            ("settings.help.tray.dbl", "settings.help.tray.dbl.what"),
+            ("settings.help.tray.right", "settings.help.tray.right.what"),
+        ]
+        .iter()
+        .map(|(k, v)| (lookup(k).to_string(), lookup(v).to_string()))
+        .collect(),
+        Step::Privacy => [
+            (
+                "shell.tour.privacy.captures",
+                "shell.tour.privacy.captures.what",
+            ),
+            ("shell.tour.privacy.ocr", "shell.tour.privacy.ocr.what"),
+            (
+                "shell.tour.privacy.accounts",
+                "shell.tour.privacy.accounts.what",
+            ),
+            (
+                "shell.tour.privacy.updates",
+                "shell.tour.privacy.updates.what",
+            ),
+        ]
+        .iter()
+        .map(|(k, v)| (lookup(k).to_string(), lookup(v).to_string()))
+        .collect(),
     }
 }
 
@@ -102,6 +127,15 @@ impl TourWindow {
     pub fn new() -> Self {
         Self {
             step: 0,
+            done: false,
+        }
+    }
+
+    /// Opened on step `step` (0-based), for offscreen renders.
+    #[cfg(test)]
+    pub fn at_step(step: usize) -> Self {
+        Self {
+            step: step.min(STEPS.len() - 1),
             done: false,
         }
     }

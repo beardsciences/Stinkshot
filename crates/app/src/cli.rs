@@ -2,6 +2,7 @@
 //!
 //!   stinkshot [--tray]                      start (tray only, no window)
 //!   stinkshot region|window|full|scroll|ocr|repeat|text|record|gif
+//!   stinkshot region --delay N              wait N seconds (1-30), then select a region
 //!   stinkshot text --paragraph              capture the selected text's paragraphs
 //!                                           trigger in the running instance (starts it if needed)
 //!   stinkshot history|settings              open windows
@@ -67,7 +68,11 @@ struct Cli {
 #[derive(Subcommand, Debug)]
 enum Sub {
     /// Capture a region.
-    Region,
+    Region {
+        /// Wait this many seconds (1-30) first, to capture menus and tooltips.
+        #[arg(short, long, value_parser = clap::value_parser!(u32).range(1..=30))]
+        delay: Option<u32>,
+    },
     /// Capture the foreground window. With --out, runs headless.
     Window {
         /// Write the capture to this file (png, jpg or webp by extension) and exit.
@@ -134,7 +139,8 @@ enum Sub {
 
 fn command_of(sub: &Sub) -> Command {
     match sub {
-        Sub::Region => Command::CaptureRegion,
+        Sub::Region { delay: None } => Command::CaptureRegion,
+        Sub::Region { delay: Some(s) } => Command::CaptureRegionDelayed { secs: Some(*s) },
         Sub::Window { .. } => Command::CaptureWindow,
         Sub::Full { .. } => Command::CaptureFullscreen,
         Sub::Scroll => Command::CaptureScrolling,
@@ -324,6 +330,21 @@ mod tests {
             Cli::try_parse_from(["stinkshot", "soak", "search", "x"]).is_err(),
             "soak must not parse"
         );
+    }
+
+    #[test]
+    fn region_delay_is_bounded() {
+        assert!(matches!(
+            command_from_args(&args(&["region", "--delay", "5"])),
+            Some(Command::CaptureRegionDelayed { secs: Some(5) })
+        ));
+        assert!(matches!(
+            command_from_args(&args(&["region", "-d", "30"])),
+            Some(Command::CaptureRegionDelayed { secs: Some(30) })
+        ));
+        for bad in ["0", "31", "x"] {
+            assert!(Cli::try_parse_from(["stinkshot", "region", "--delay", bad]).is_err());
+        }
     }
 
     #[test]

@@ -50,7 +50,7 @@ pub fn get(key: &str) -> Option<&'static str> {
         "history.act.star" => "Star",
         "history.act.unstar" => "Remove Star",
         "history.act.delete" => "Delete\u{2026}",
-        "history.act.no_ocr" => "Needs an OCR Language in Windows Settings",
+        "history.act.no_ocr" => "Needs a Text Recognition Language in Windows",
         "history.act.indexing" => "Still Indexing Text",
         "history.act.no_text" => "No Text Found",
         "history.act.images_only" => "Images Only",

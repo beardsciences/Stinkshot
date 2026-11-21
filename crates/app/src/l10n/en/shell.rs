@@ -7,12 +7,14 @@ pub fn get(key: &str) -> Option<&'static str> {
         "shell.tray.history" => "History",
         "shell.tray.settings" => "Settings",
         "shell.tray.quit" => "Quit",
+        "shell.tray.more" => "More",
         "shell.action.region" => "Region",
         "shell.action.window" => "Window",
         "shell.action.fullscreen" => "Full Screen",
         "shell.action.scrolling" => "Scrolling",
         "shell.action.ocr" => "Copy Text (OCR)",
         "shell.action.repeat_last" => "Repeat Last Region",
+        "shell.action.delayed_region" => "Region After Delay",
         "shell.action.selected_text" => "Capture Selected Text",
         "shell.action.selected_paragraph" => "Capture Selected Paragraph",
         "shell.action.pick_color" => "Pick Color",
@@ -21,9 +23,12 @@ pub fn get(key: &str) -> Option<&'static str> {
         "shell.action.region.desc" => "Freeze the screen and drag a region.",
         "shell.action.window.desc" => "Capture the active window with its rounded corners.",
         "shell.action.fullscreen.desc" => "Capture the monitor under the cursor.",
-        "shell.action.scrolling.desc" => "Select a region to scroll and stitch.",
+        "shell.action.scrolling.desc" => "Select a region to scroll and capture as one tall image.",
         "shell.action.ocr.desc" => "Select a region and copy the recognized text.",
         "shell.action.repeat_last.desc" => "Capture the previous region again.",
+        "shell.action.delayed_region.desc" => {
+            "Wait a few seconds, then select a region. Open the menu or tooltip first."
+        }
         "shell.action.selected_text.desc" => "Capture the text highlighted in the active app.",
         "shell.action.selected_paragraph.desc" => {
             "Capture the paragraphs around the highlighted text."
@@ -68,7 +73,7 @@ pub fn get(key: &str) -> Option<&'static str> {
         "shell.toast.folder.tip" => "Show in Folder",
         "shell.toast.delete.tip" => "Move to Recycle Bin",
         "shell.toast.dismiss" => "Dismiss",
-        "shell.toast.ocr_missing" => "Needs an OCR Language in Windows Settings",
+        "shell.toast.ocr_missing" => "Needs a Text Recognition Language in Windows",
         "shell.tray.update_check_on" => "Update Checks On",
         "shell.tray.stop_recording" => "Stop Recording",
         "shell.tray.offline" => "Offline",
@@ -136,7 +141,7 @@ pub fn get(key: &str) -> Option<&'static str> {
             "The history folder is not ready for recording. Check it in Settings > History."
         }
         "shell.record.start_failed" => "Could Not Start Recording",
-        "shell.record.problem.body" => "The recorder hit a problem.",
+        "shell.record.problem.body" => "The recording was interrupted.",
         "shell.record.problem.tail" => "Stopping and keeping what was recorded.",
         "shell.record.problem" => "Recording Problem",
         "shell.record.disk_low" => "Disk Almost Full",
@@ -219,7 +224,7 @@ pub fn get(key: &str) -> Option<&'static str> {
             "Press {key} to capture a region, or use the tray icon. Start Stinkshot again to open History."
         }
         "shell.hud.gif" => "GIF · {fps} FPS · Up to {w} px Wide · No Audio",
-        "shell.hud.mp4" => "MP4 · H.264 · {fps} FPS · {audio}",
+        "shell.hud.mp4" => "MP4 · {fps} FPS · {audio}",
         "shell.record.needs_hw" => "{fps} FPS needs hardware encoding.",
         "shell.saved.as" => "Saved {name}",
         "shell.update.available" => "Stinkshot {tag} Is Available",
@@ -255,12 +260,12 @@ pub fn get(key: &str) -> Option<&'static str> {
         "shell.hud.on" => "{name} On",
         "shell.hud.off" => "{name} Off",
         "shell.hud.stop_trim_key" => "Stop and Trim ({key})",
-        "shell.hud.dropped" => "{summary} · {n} Dropped",
+        "shell.hud.dropped" => "{summary} \u{b7} {n} Frames Skipped",
         "shell.trim.save_prompt.body" => {
             "Not saved yet. Save Untrimmed keeps the whole recording as {fmt}."
         }
         "shell.trim.keep" => "Keep {t}",
-        "shell.scroll.stitching" => "Stitching Frame {n}",
+        "shell.scroll.stitching" => "Capturing Screen {n}",
         "shell.internal.title" => "Something Went Wrong",
         "shell.clipboard.busy_saved" => {
             "Another app is using the clipboard. The capture is saved. Use Copy on the toast or in History."
@@ -280,6 +285,10 @@ pub fn get(key: &str) -> Option<&'static str> {
         "shell.save.history_failed.clipboard" => "It was copied to the clipboard instead.",
         "shell.save.history_failed.lost" => "The capture was not kept.",
         "shell.saved.default_folder" => "Saved to Default Folder",
+        "shell.history_dir.changed" => "History Folder Changed",
+        "shell.history_dir.changed.body" => {
+            "Captures in {dir} stay there and no longer show in History."
+        }
         "shell.history_dir.back" => "History Folder Available",
         "shell.history_dir.back.body" => "{dir} is connected again. Captures go there now.",
         "shell.end_session.reason" => "Saving the recording",
@@ -340,7 +349,7 @@ pub fn get(key: &str) -> Option<&'static str> {
         "shell.internal.body" => {
             "Stinkshot hit an internal error and stopped that task. Try again. {hint}"
         }
-        "shell.ocr.none" => "No OCR Language Installed",
+        "shell.ocr.none" => "No Text Recognition Language Installed",
         "shell.ocr.none.body" => {
             "Add a language with text recognition in Windows Settings > Time & language > Language & region."
         }
@@ -368,7 +377,7 @@ pub fn get(key: &str) -> Option<&'static str> {
         "shell.hotkey.not_set" => "Not Set",
         "shell.toggle.on" => "On",
         "shell.toggle.off" => "Off",
-        "shell.about.tagline" => "Local-first screenshots and screen recording for Windows",
+        "shell.about.tagline" => "Private screenshots and screen recording for Windows",
         "shell.hotkey.phrase.invalid" => "is not a valid key combination",
         "shell.hotkey.phrase.duplicate" => "is set for both",
         "shell.hotkey.phrase.in_use" => "is already used by another program",
@@ -404,9 +413,17 @@ pub fn get(key: &str) -> Option<&'static str> {
             "Set a region hotkey in Settings > Hotkeys, or use the tray icon."
         }
         "shell.tour.tray.title" => "It Lives in the Tray",
-        "shell.tour.tray.body" => "Click the tray icon to capture. Double-click for History.",
+        "shell.tour.tray.body" => "Stinkshot runs in the background, next to the clock.",
         "shell.tour.privacy.title" => "Your Captures Never Leave Your PC",
-        "shell.tour.privacy.body" => "No uploads, accounts or telemetry. Update checks are opt-in.",
+        "shell.tour.privacy.body" => "Stinkshot works without an internet connection.",
+        "shell.tour.privacy.captures" => "Captures",
+        "shell.tour.privacy.captures.what" => "Stay on this PC",
+        "shell.tour.privacy.ocr" => "Text Recognition",
+        "shell.tour.privacy.ocr.what" => "Runs offline in Windows",
+        "shell.tour.privacy.accounts" => "Accounts and Telemetry",
+        "shell.tour.privacy.accounts.what" => "None",
+        "shell.tour.privacy.updates" => "Update Check",
+        "shell.tour.privacy.updates.what" => "Off until you turn it on",
         "shell.tour.files.title" => "Where Captures Go",
         "shell.tour.files.body" => {
             "Saved here and listed in History. Change it in Settings > History."
@@ -422,12 +439,14 @@ pub const KEYS: &[&str] = &[
     "shell.tray.history",
     "shell.tray.settings",
     "shell.tray.quit",
+    "shell.tray.more",
     "shell.action.region",
     "shell.action.window",
     "shell.action.fullscreen",
     "shell.action.scrolling",
     "shell.action.ocr",
     "shell.action.repeat_last",
+    "shell.action.delayed_region",
     "shell.action.selected_text",
     "shell.action.selected_paragraph",
     "shell.action.pick_color",
@@ -439,6 +458,7 @@ pub const KEYS: &[&str] = &[
     "shell.action.scrolling.desc",
     "shell.action.ocr.desc",
     "shell.action.repeat_last.desc",
+    "shell.action.delayed_region.desc",
     "shell.action.selected_text.desc",
     "shell.action.selected_paragraph.desc",
     "shell.selected_text.none",
@@ -639,6 +659,8 @@ pub const KEYS: &[&str] = &[
     "shell.save.history_failed.clipboard",
     "shell.save.history_failed.lost",
     "shell.saved.default_folder",
+    "shell.history_dir.changed",
+    "shell.history_dir.changed.body",
     "shell.history_dir.back",
     "shell.history_dir.back.body",
     "shell.end_session.reason",
@@ -720,6 +742,14 @@ pub const KEYS: &[&str] = &[
     "shell.tour.tray.body",
     "shell.tour.privacy.title",
     "shell.tour.privacy.body",
+    "shell.tour.privacy.captures",
+    "shell.tour.privacy.captures.what",
+    "shell.tour.privacy.ocr",
+    "shell.tour.privacy.ocr.what",
+    "shell.tour.privacy.accounts",
+    "shell.tour.privacy.accounts.what",
+    "shell.tour.privacy.updates",
+    "shell.tour.privacy.updates.what",
     "shell.tour.files.title",
     "shell.tour.files.body",
     "shell.a11y.item",

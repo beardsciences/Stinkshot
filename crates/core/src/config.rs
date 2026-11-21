@@ -61,6 +61,8 @@ pub struct Hotkeys {
     pub scrolling: String,
     pub ocr: String,
     pub repeat_last_region: String,
+    /// Region After Delay. Unbound by default.
+    pub delayed_region: String,
     pub record_mp4: String,
     pub record_gif: String,
     /// Standalone color picker (empty = no hotkey; also in the tray menu).
@@ -96,6 +98,10 @@ pub struct Capture {
     pub filename_pattern: String,
     pub scroll_max_height: u32,
     pub scroll_delay_ms: u32,
+    /// Scrolling capture scrolls to the top first, so it gets the whole page.
+    pub scroll_from_top: bool,
+    /// Region After Delay: seconds before the screen freezes (1..=30).
+    pub delay_seconds: u32,
     pub last_region: Option<crate::geom::PxRect>,
     /// Window and full-screen captures open in the editor first. Off: they are finished
     /// right away (clipboard, history, toast) and the toast's Edit opens the editor.
@@ -223,6 +229,9 @@ pub struct Privacy {
     /// The one and only network feature. Off by default.
     pub check_for_updates: bool,
     pub last_update_check: Option<chrono::DateTime<chrono::Utc>>,
+    /// Let Windows clipboard history (Win+V) keep what Stinkshot copies. Off by default:
+    /// captures often hold things that should not linger there.
+    pub clipboard_history: bool,
 }
 
 impl Default for General {
@@ -257,6 +266,7 @@ impl Default for Hotkeys {
             record_mp4: "Control+Alt+KeyR".into(),
             record_gif: "Control+Alt+KeyG".into(),
             pick_color: String::new(),
+            delayed_region: String::new(),
             selected_text: String::new(),
             selected_paragraph: String::new(),
         }
@@ -281,6 +291,8 @@ impl Default for Capture {
             filename_pattern: "Stinkshot_{yyyy}-{MM}-{dd}_{HH}-{mm}-{ss}".into(),
             scroll_max_height: 30000,
             scroll_delay_ms: 120,
+            scroll_from_top: true,
+            delay_seconds: 5,
             last_region: None,
             open_editor_after_capture: false,
             after_region: AfterRegion::Annotate,

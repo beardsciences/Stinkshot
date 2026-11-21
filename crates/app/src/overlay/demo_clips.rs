@@ -585,7 +585,8 @@ fn key(k: Key) -> Step {
 fn demo_clips() {
     let dir = PathBuf::from(std::env::var("STINKSHOT_DEMO_DIR").expect("STINKSHOT_DEMO_DIR"));
     let only = std::env::var("STINKSHOT_DEMO_ONLY").unwrap_or_default();
-    crate::l10n::apply("en");
+    // STINKSHOT_DEMO_LANG=es checks a translation for clipping (site media stays English).
+    crate::l10n::apply(&std::env::var("STINKSHOT_DEMO_LANG").unwrap_or_else(|_| "en".into()));
     toolbar::remember(None);
     let setup = crate::gpu::start()
         .and_then(|h| h.join().ok().flatten())
@@ -1283,11 +1284,52 @@ fn demo_clips() {
             // The site shows the app as installed: element snapping is on by default.
             shared.config = Config::default();
             let mut sw = crate::settings_ui::SettingsWindow::new(&shared);
-            for (page, section) in [
-                ("recording", crate::settings_ui::Section::Recording),
-                ("privacy", crate::settings_ui::Section::Privacy),
-                ("general", crate::settings_ui::Section::General),
-            ] {
+            use crate::settings_ui::Section as S;
+            let mut pages = vec![
+                ("recording", S::Recording),
+                ("privacy", S::Privacy),
+                ("general", S::General),
+            ];
+            // STINKSHOT_DEMO_ALL_PAGES=1: every page, for checking a translation.
+            if std::env::var("STINKSHOT_DEMO_ALL_PAGES").as_deref() == Ok("1") {
+                pages.extend([
+                    ("hotkeys", S::Hotkeys),
+                    ("capture", S::Capture),
+                    ("editor", S::Editor),
+                    ("history", S::History),
+                    ("help", S::Help),
+                    ("about", S::About),
+                ]);
+            }
+            if std::env::var("STINKSHOT_DEMO_ALL_PAGES").as_deref() == Ok("1") {
+                for step in 0..4 {
+                    let mut tour = crate::tour::TourWindow::at_step(step);
+                    still(
+                        format!("tour-{step}-{theme}"),
+                        840,
+                        600,
+                        &mut shared,
+                        &mut tour,
+                    );
+                }
+                let summary = crate::l10n::tr!(
+                    "shell.hud.mp4",
+                    fps = 60,
+                    audio = crate::l10n::tr!("shell.hud.mic_system")
+                );
+                let mut hud = crate::record_ui::RecordHud::new(
+                    PxRect::new(0, 0, 1280, 720),
+                    summary,
+                    crate::record_ui::HudToggles {
+                        mic: true,
+                        system: true,
+                        webcam: false,
+                        overlays: true,
+                    },
+                );
+                still(format!("hud-{theme}"), 528, 108, &mut shared, &mut hud);
+            }
+            for (page, section) in pages {
                 sw.show_section(section);
                 still(
                     format!("site-settings-{page}-{theme}"),

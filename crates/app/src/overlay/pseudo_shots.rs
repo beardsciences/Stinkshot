@@ -2,6 +2,7 @@
 //! clipped or overflowing text without opening a real overlay (which is excluded from
 //! capture). Ignored by default because it switches the global language:
 //! `STINKSHOT_SHOTS_DIR=<dir> cargo test -p stinkshot pseudo_shots -- --ignored`.
+//! `STINKSHOT_SHOTS_LANG=es` renders a translation instead of pseudo.
 
 use eframe::egui_wgpu::{self, wgpu};
 use egui::{Align2, Color32, Context, Pos2, Rect, Vec2};
@@ -395,7 +396,8 @@ fn pseudo_shots() {
         std::env::var("STINKSHOT_SHOTS_DIR").unwrap_or_else(|_| "pseudo-shots".into()),
     );
     std::fs::create_dir_all(&dir).unwrap();
-    crate::l10n::apply("pseudo");
+    // STINKSHOT_SHOTS_LANG=es renders a real translation instead.
+    crate::l10n::apply(&std::env::var("STINKSHOT_SHOTS_LANG").unwrap_or_else(|_| "pseudo".into()));
     let setup = crate::gpu::start()
         .and_then(|h| h.join().ok().flatten())
         .expect("no wgpu device");

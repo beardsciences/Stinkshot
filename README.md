@@ -16,8 +16,11 @@ Capture
 - Magnifier loupe with pixel coordinates. Pick Color copies hex, RGB or HSL.
 - Window capture with Windows 11 rounded corners and alpha, optional drop shadow and padded
   background. The cursor is left out by default.
-- Scrolling capture: auto-scroll and stitch, with sticky header and footer handling. It waits
-  out smooth scrolling, spinners and lazy-loading placeholders, and crops the scrollbar.
+- Region After Delay: waits a few seconds before freezing, so open menus and tooltips can be
+  captured. From the tray, a hotkey or `stinkshot region --delay N`.
+- Scrolling capture: auto-scroll and stitch, with sticky header and footer handling. It starts
+  from the top of the page, waits out smooth scrolling, spinners and lazy-loading placeholders,
+  and crops the scrollbar.
 - Full web pages: start a scrolling capture and click the page. Stinkshot snaps to the page
   without the browser's tabs and toolbar. No extension needed.
 - Copy Text (OCR) with Windows.Media.Ocr: select a region, get the text on the clipboard.
@@ -120,7 +123,7 @@ it if needed.
 
 ```
 stinkshot [--tray]
-stinkshot region
+stinkshot region [--delay SECONDS]
 stinkshot window [--out FILE] [--cursor]
 stinkshot full [--out FILE] [--monitor N] [--cursor]
 stinkshot scroll

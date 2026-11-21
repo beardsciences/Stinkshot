@@ -140,6 +140,8 @@ pub struct Countdown {
     rect: PxRect,
     scale: f32,
     esc_was_down: bool,
+    /// Sent when Esc cancels the countdown.
+    cancel: fn() -> Command,
 }
 
 impl Countdown {
@@ -159,6 +161,31 @@ impl Countdown {
             scale: area.scale,
             // The Esc that confirmed the region may still be held: only a fresh press counts.
             esc_was_down: uc::async_key_down(uc::VK_ESCAPE),
+            cancel: || Command::RecordCancel,
+        }
+    }
+
+    /// Region After Delay: in the bottom-right corner of the monitor's work area, clear of
+    /// the menus and tooltips being set up in the middle of the screen.
+    pub fn delayed_capture(seconds: u32, area: uc::MonArea) -> Self {
+        let side = uc::px(COUNTDOWN_WIN, area.scale);
+        let margin = uc::px(16.0, area.scale);
+        let rect = uc::clamp_into(
+            PxRect::new(
+                area.work.right() - side - margin,
+                area.work.bottom() - side - margin,
+                side,
+                side,
+            ),
+            area.work,
+        );
+        Self {
+            seconds,
+            start: Instant::now(),
+            rect,
+            scale: area.scale,
+            esc_was_down: uc::async_key_down(uc::VK_ESCAPE),
+            cancel: || Command::DelayCancel,
         }
     }
 
@@ -203,7 +230,7 @@ impl Surface for Countdown {
         let esc = (esc_down && !self.esc_was_down) || ctx.input(|i| i.key_pressed(Key::Escape));
         self.esc_was_down = esc_down;
         if esc {
-            shared.outbox.push(Command::RecordCancel);
+            shared.outbox.push((self.cancel)());
             return SurfaceStatus::Close;
         }
         if self.finished() {
@@ -378,7 +405,7 @@ pub struct RecordHud {
 }
 
 impl RecordHud {
-    /// `summary` e.g. "MP4 · NVENC H.264 · 60 fps · mic + system".
+    /// `summary` e.g. "MP4 · 60 FPS · Mic + System".
     pub fn new(region: PxRect, summary: String, toggles: HudToggles) -> Self {
         let area = uc::area_of_rect(region);
         let size = (uc::px(HUD_W, area.scale), uc::px(HUD_H, area.scale));
@@ -1781,6 +1808,29 @@ mod tests {
         assert_eq!(x_to_secs(-100.0, left, w, dur), 0.0);
         assert_eq!(x_to_secs(9999.0, left, w, dur), dur);
         assert_eq!(x_to_secs(10.0, left, 0.0, dur), 0.0);
+    }
+
+    #[test]
+    fn delay_countdown_sits_in_the_corner_and_cancels_the_delay() {
+        let area = uc::MonArea {
+            work: PxRect::new(1920, 0, 2560, 1400),
+            scale: 1.5,
+        };
+        let c = Countdown::delayed_capture(5, area);
+        let (side, margin) = (uc::px(COUNTDOWN_WIN, 1.5), uc::px(16.0, 1.5));
+        assert_eq!(
+            c.rect,
+            PxRect::new(
+                1920 + 2560 - side - margin,
+                1400 - side - margin,
+                side,
+                side
+            )
+        );
+        assert!(matches!((c.cancel)(), Command::DelayCancel));
+        assert!(!c.finished());
+        let r = Countdown::new(3, PxRect::new(0, 0, 800, 600));
+        assert!(matches!((r.cancel)(), Command::RecordCancel));
     }
 
     #[test]

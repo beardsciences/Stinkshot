@@ -30,6 +30,9 @@ pub struct DriveParams {
     pub settle_max: Duration,
     /// Captures of the same step that failed to match before the capture stops.
     pub retries: u32,
+    /// Scroll to the top before the first frame, so a capture started mid-page still gets
+    /// the whole page.
+    pub from_top: bool,
 }
 
 impl DriveParams {
@@ -42,6 +45,7 @@ impl DriveParams {
             max_steps: 800,
             settle_max: Duration::from_millis(2500),
             retries: 2,
+            from_top: false,
         }
     }
 }
@@ -80,6 +84,13 @@ const POLL: Duration = Duration::from_millis(40);
 /// After a step that did not move, wait at least this long before the next capture
 /// (infinite-scroll pages load more content at the bottom).
 const END_GRACE: Duration = Duration::from_millis(700);
+
+/// Wheel notches per rewind step (about 1,500 logical px in most apps).
+const REWIND_NOTCHES: i32 = 15;
+/// Rewind steps before giving up on reaching the top (about 60,000 px).
+const REWIND_STEPS: u32 = 40;
+/// Shortest wait after a rewind step: smooth scrolling needs about this long to finish.
+const REWIND_WAIT: Duration = Duration::from_millis(150);
 
 /// Why `settle` returned.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -160,6 +171,40 @@ fn settle(
     }
 }
 
+/// Scrolls up until a step leaves the frame as it was (the top), `REWIND_STEPS` runs out,
+/// or the capture is stopped. Changes in under 2% of the frame (a caret, a video) do not
+/// count as movement. Returns the rewind steps sent.
+fn rewind(
+    params: &DriveParams,
+    capture: &mut impl FnMut() -> Result<Rgba, String>,
+    scroll: &mut impl FnMut(i32),
+    control: &mut impl FnMut() -> DriveControl,
+    out: &mut DriveOutcome,
+) -> Result<u32, String> {
+    out.captures += 1;
+    let mut prev = capture()?;
+    let wait = params.delay.max(REWIND_WAIT);
+    for step in 0..REWIND_STEPS {
+        if control() != DriveControl::Run {
+            return Ok(step);
+        }
+        scroll(REWIND_NOTCHES);
+        out.scrolls.push(REWIND_NOTCHES);
+        std::thread::sleep(wait);
+        out.captures += 1;
+        let cur = capture()?;
+        let moved = match settle::diff(&prev, &cur, 6) {
+            Some(c) => c.pixels > 0 && c.bbox_area_share(cur.width, cur.height) > 0.02,
+            None => true,
+        };
+        if !moved {
+            return Ok(step + 1);
+        }
+        prev = cur;
+    }
+    Ok(REWIND_STEPS)
+}
+
 /// Capture -> push -> scroll -> wait, until `End`, `Failed`, a capture error, `Stop`,
 /// `Cancel` or `max_steps`. Each step waits until the page settles (`settle_max`): frames
 /// stop changing (smooth scrolling, spinners) and the new rows hold no loading
@@ -180,6 +225,15 @@ pub fn drive(
     // permanent animation (video, carousel), which then no longer holds steps back.
     let mut small_timeouts = 0u32;
     let mut grace = false;
+    if params.from_top {
+        match rewind(params, &mut capture, &mut scroll, &mut control, &mut out) {
+            Ok(n) => log::debug!("scroll: rewound to the top in {n} steps"),
+            Err(e) => {
+                out.error = Some(e);
+                return out;
+            }
+        }
+    }
     'steps: for _ in 0..params.max_steps {
         match control() {
             DriveControl::Cancel => {
@@ -343,6 +397,67 @@ mod tests {
                 "row {y}"
             );
         }
+    }
+
+    /// Started halfway down: the rewind brings the page to the top first, so the result is
+    /// the whole document.
+    #[test]
+    fn from_top_rewinds_before_stitching() {
+        let (w, vh, dh) = (64u32, 40u32, 400u32);
+        let doc: Vec<Vec<u8>> = (0..dh).map(|y| doc_row(y, w)).collect();
+        let pos = Cell::new(200u32);
+        let mut st = Stitcher::new(no_trim());
+        let params = DriveParams {
+            from_top: true,
+            ..quick(440.0)
+        };
+        let out = drive(
+            &mut st,
+            &params,
+            || {
+                let mut img = Rgba::new(w, vh);
+                for y in 0..vh {
+                    let src = &doc[(pos.get() + y) as usize];
+                    img.data[(y * w * 4) as usize..((y + 1) * w * 4) as usize].copy_from_slice(src);
+                }
+                Ok(img)
+            },
+            |n| pos.set((pos.get() as i32 - n * 10).clamp(0, (dh - vh) as i32) as u32),
+            || DriveControl::Run,
+            |_, _| {},
+        );
+        assert!(!out.failed && out.error.is_none(), "{out:?}");
+        // 200 rows up at 150 rows a step: two steps move, the third finds the top.
+        assert_eq!(&out.scrolls[..3], &[REWIND_NOTCHES; 3]);
+        let img = st.finish();
+        assert_eq!(img.height, dh);
+        assert_eq!(&img.data[..(w * 4) as usize], &doc[0][..]);
+    }
+
+    /// Without `from_top` the capture starts where the page is.
+    #[test]
+    fn without_from_top_starts_where_the_page_is() {
+        let (w, vh, dh) = (64u32, 40u32, 400u32);
+        let doc: Vec<Vec<u8>> = (0..dh).map(|y| doc_row(y, w)).collect();
+        let pos = Cell::new(200u32);
+        let mut st = Stitcher::new(no_trim());
+        let out = drive(
+            &mut st,
+            &quick(440.0),
+            || {
+                let mut img = Rgba::new(w, vh);
+                for y in 0..vh {
+                    let src = &doc[(pos.get() + y) as usize];
+                    img.data[(y * w * 4) as usize..((y + 1) * w * 4) as usize].copy_from_slice(src);
+                }
+                Ok(img)
+            },
+            |n| pos.set((pos.get() as i32 - n * 10).clamp(0, (dh - vh) as i32) as u32),
+            || DriveControl::Run,
+            |_, _| {},
+        );
+        assert!(out.scrolls.iter().all(|&n| n < 0), "{out:?}");
+        assert_eq!(st.finish().height, dh - 200);
     }
 
     /// Lazy page: rows newly scrolled into view show a flat gray placeholder until three

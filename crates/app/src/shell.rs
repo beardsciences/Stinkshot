@@ -735,6 +735,10 @@ struct HwndState {
     a11y: Option<crate::a11y::Attached>,
 }
 
+/// Region After Delay: wait between closing the countdown and freezing the screen, so
+/// the countdown window is gone even when Hide Stinkshot From Captures is off.
+const DELAY_CLOSE_GAP: Duration = Duration::from_millis(150);
+
 struct Slot<T> {
     s: T,
     st: HwndState,
@@ -940,6 +944,10 @@ struct Shell {
     settings: Option<Slot<SettingsWindow>>,
     tour: Option<Slot<crate::tour::TourWindow>>,
     countdown: Option<Slot<Countdown>>,
+    /// Region After Delay: its countdown, then the moment the overlay opens (a short gap
+    /// after the countdown window closes, so it is gone from the frozen screen).
+    delay: Option<Slot<Countdown>>,
+    delay_fire_at: Option<Instant>,
     record_frame: Option<Slot<RecordFrame>>,
     record_hud: Option<Slot<RecordHud>>,
     trim: Option<Slot<TrimWindow>>,
@@ -1174,6 +1182,8 @@ impl Shell {
             settings: None,
             tour: None,
             countdown: None,
+            delay: None,
+            delay_fire_at: None,
             record_frame: None,
             record_hud: None,
             trim: None,
@@ -1240,6 +1250,9 @@ impl Shell {
         }
         shell.apply_autostart();
         window_util::set_hide_from_capture(shell.shared.config.general.hide_from_captures);
+        stinkshot_platform::clipboard::set_allow_history(
+            shell.shared.config.privacy.clipboard_history,
+        );
         workers::recover_recordings(&shell.env(), leftover_recordings);
         if !shell.hotkey_errors.is_empty() {
             let body = shell.hotkey_errors.join("\n");
@@ -1604,6 +1617,11 @@ impl Shell {
         }
         match cmd {
             Command::CaptureRegion => self.begin_overlay(OverlayMode::Capture),
+            Command::CaptureRegionDelayed { secs } => self.start_delay(secs),
+            Command::DelayCancel => {
+                self.delay = None;
+                self.delay_fire_at = None;
+            }
             Command::CaptureWindow => self.capture_window(),
             Command::CaptureFullscreen => self.capture_fullscreen(),
             Command::CaptureScrolling => {
@@ -2533,7 +2551,44 @@ impl Shell {
         }
     }
 
+    /// Region After Delay: start (or restart) the countdown.
+    fn start_delay(&mut self, secs: Option<u32>) {
+        if self.quitting {
+            return;
+        }
+        let secs = secs
+            .unwrap_or(self.shared.config.capture.delay_seconds)
+            .clamp(1, 30);
+        // A freeze taken at start-up shows the screen before the wait: never use it.
+        self.early_freeze = None;
+        self.delay = Some(Slot::new(Countdown::delayed_capture(
+            secs,
+            crate::toast::ui_common::area_under_cursor(),
+        )));
+        self.delay_fire_at = None;
+        self.touch();
+    }
+
+    /// Region After Delay: close the countdown when it ends, then open the overlay.
+    fn tick_delay(&mut self) {
+        if self.delay.as_ref().is_some_and(|d| d.s.finished()) {
+            self.delay = None;
+            self.delay_fire_at = Some(Instant::now() + DELAY_CLOSE_GAP);
+            self.touch();
+        }
+        match self.delay_fire_at {
+            Some(at) if Instant::now() >= at => {
+                self.delay_fire_at = None;
+                self.begin_overlay(OverlayMode::Capture);
+            }
+            Some(at) => wake::wake_after(at.saturating_duration_since(Instant::now())),
+            None if self.delay.is_some() => wake::wake_after(Duration::from_millis(100)),
+            None => {}
+        }
+    }
+
     fn tick_recording(&mut self) {
+        self.tick_delay();
         // Countdown -> start.
         if let Rec::Countdown(p) = &self.rec {
             let done = self
@@ -3265,6 +3320,7 @@ impl Shell {
             self.apply_autostart();
         }
         window_util::set_hide_from_capture(new.general.hide_from_captures);
+        stinkshot_platform::clipboard::set_allow_history(new.privacy.clipboard_history);
         if old.hotkeys != new.hotkeys {
             self.hotkey_errors = self.hotkeys.reload(&new.hotkeys);
             if let Some(s) = &mut self.settings {
@@ -3290,6 +3346,13 @@ impl Shell {
                     self.forget_history_items();
                     let _ = self.bg_kick.send(BgKick::Full);
                     self.invalidate_history();
+                    // Said once, when it happens, instead of under the setting for good.
+                    let old_dir = old.history_folder();
+                    self.notify(
+                        tr!("shell.history_dir.changed"),
+                        tr!("shell.history_dir.changed.body", dir = old_dir.display()),
+                        false,
+                    );
                 }
                 Err(e) => {
                     let body = report_with(
@@ -3480,6 +3543,8 @@ impl Shell {
             || self.settings.is_some()
             || self.tour.is_some()
             || self.countdown.is_some()
+            || self.delay.is_some()
+            || self.delay_fire_at.is_some()
             || self.record_frame.is_some()
             || self.record_hud.is_some()
             || self.trim.is_some()
@@ -3524,6 +3589,7 @@ impl Shell {
         closed |= drive_opt(ctx, shared, &mut self.settings, true);
         closed |= drive_opt(ctx, shared, &mut self.tour, true);
         closed |= drive_opt(ctx, shared, &mut self.countdown, false);
+        closed |= drive_opt(ctx, shared, &mut self.delay, false);
         closed |= drive_opt(ctx, shared, &mut self.record_frame, false);
         closed |= drive_opt(ctx, shared, &mut self.record_hud, false);
         closed |= drive_opt(ctx, shared, &mut self.scroll_hud, false);
@@ -3705,7 +3771,7 @@ mod tests {
         assert!(gif.contains(&format!("{} FPS", rc.gif_fps)));
         assert!(gif.contains("No Audio"));
         let mp4 = record_summary(&rc, false, rc.fps);
-        assert!(mp4.contains("H.264"));
+        assert!(mp4.starts_with("MP4") && !mp4.contains("H.264"));
         assert!(mp4.contains(&format!("{} FPS", rc.fps)));
         // The rate in use, not the setting, when 120 FPS fell back to 60.
         assert!(record_summary(&rc, false, 60).contains("60 FPS"));

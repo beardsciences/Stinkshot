@@ -2332,7 +2332,7 @@ mod tests {
         assert!(!Act::CopyText.enabled(&img, false));
         assert_eq!(
             Act::CopyText.disabled_reason(&img, false),
-            Some("Needs an OCR Language in Windows Settings")
+            Some("Needs a Text Recognition Language in Windows")
         );
         let mut pending = meta(3, ItemKind::Image);
         pending.ocr_text = None;

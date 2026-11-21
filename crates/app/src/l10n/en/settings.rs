@@ -6,6 +6,7 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.language.desc" => "Menus and messages.",
         "settings.language.system" => "System Default",
         "settings.language.en" => "English",
+        "settings.language.es" => "Español",
         "settings.language.pseudo" => "Pseudo",
         "settings.theme" => "Theme",
         "settings.theme.desc" => "Follow Windows or force dark or light.",
@@ -55,12 +56,15 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.history.no_limit" => "No Limit",
         "settings.history.one_day" => "1 Day",
         "settings.history.days" => "{n} Days",
+        "settings.history.one_week" => "1 Week",
+        "settings.history.one_month" => "1 Month",
+        "settings.history.months" => "{n} Months",
+        "settings.history.one_year" => "1 Year",
         "settings.history.gb" => "{gb} GB",
-        "settings.history.folder.desc" => {
-            "{path}\nCaptures in the old folder stay there and leave History."
-        }
+        "settings.history.folder.desc" => "{path}",
         "settings.history.ocr.desc" => "Runs offline in the background.",
-        "settings.history.ocr.desc_missing" => "No OCR language is installed. {help}",
+        "settings.history.ocr.add_language" => "Add a Language",
+        "settings.history.ocr.desc_missing" => "Needs a Windows language with text recognition.",
         "settings.history.stats" => "{count} items, {size} used.",
         "settings.privacy.never_checked" => "Never checked",
         "settings.privacy.just_now" => "just now",
@@ -86,14 +90,14 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.general.after_capture" => "After a Capture",
         "settings.general.copy" => "Copy to Clipboard",
         "settings.general.copy.desc" => "Every finished capture.",
-        "settings.general.toast" => "Show Toast",
+        "settings.general.toast" => "Show Notification",
         "settings.general.toast.desc" => "A small card with quick actions after each capture.",
-        "settings.general.toast_duration" => "Toast Duration",
+        "settings.general.toast_duration" => "Notification Duration",
         "settings.general.toast_duration.desc" => "Hovering pauses the timer.",
         "settings.general.sound" => "Play Sound",
         "settings.general.hide_capture" => "Hide Stinkshot From Captures",
         "settings.general.hide_capture.desc" => {
-            "The editor, toasts and recording bar, in recordings too."
+            "The editor, notifications and recording bar, in recordings too."
         }
         "settings.general.sound.desc" => "A short shutter sound after capturing.",
         "settings.general.pins" => "Pins",
@@ -109,7 +113,7 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.hotkeys.printscreen" => "Take Over PrintScreen",
         "settings.hotkeys.printscreen.locked" => "Set by Replace Snipping Tool.",
         "settings.hotkeys.printscreen.desc" => "PrtSc opens Stinkshot.",
-        "settings.hotkeys.shortcuts" => "Hotkeys",
+        "settings.hotkeys.shortcuts" => "Actions",
         "settings.hotkeys.clear" => "Clear",
         "settings.hotkeys.chord_fixed" => "Fixed by Windows.",
         "settings.hotkeys.help" => {
@@ -118,11 +122,11 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.hotkeys.reset" => "Reset Hotkeys",
         "settings.capture.cursor" => "Include Mouse Cursor",
         "settings.capture.cursor.desc" => "",
-        "settings.capture.cursor_object" => "Cursor as Object",
-        "settings.capture.cursor_object.desc" => "Move it in the editor. Del removes it.",
+        "settings.capture.cursor_object" => "Movable Cursor",
+        "settings.capture.cursor_object.desc" => "Move or delete the cursor in the editor.",
         "settings.capture.snap" => "Snap to Windows and Elements",
         "settings.capture.snap.desc" => "Click a highlighted window or element to capture it.",
-        "settings.capture.loupe" => "Magnifier Loupe",
+        "settings.capture.loupe" => "Magnifier",
         "settings.capture.loupe.desc" => "Coordinates and color under the cursor while selecting.",
         "settings.capture.open_editor" => "Edit Window and Full Screen Captures",
         "settings.capture.open_editor.desc" => {
@@ -154,7 +158,13 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.capture.pattern" => "File Name Pattern",
         "settings.capture.scrolling" => "Scrolling Capture",
         "settings.capture.max_height" => "Maximum Height",
-        "settings.capture.max_height.desc" => "Stop stitching at this height.",
+        "settings.capture.max_height.desc" => "The capture stops at this height.",
+        "settings.capture.delay" => "Region After Delay",
+        "settings.capture.delay.desc" => "Seconds to wait before the screen freezes.",
+        "settings.capture.scroll_from_top" => "Start From the Top",
+        "settings.capture.scroll_from_top.desc" => {
+            "Scrolls up first, so the capture gets the whole page."
+        }
         "settings.capture.scroll_delay" => "Minimum Delay Between Scrolls",
         "settings.capture.scroll_delay.desc" => {
             "Longer waits happen on their own while a page loads."
@@ -185,8 +195,12 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.recording.video" => "Video",
         "settings.recording.fps" => "Frame Rate",
         "settings.recording.fps.desc" => "120 FPS needs hardware encoding.",
-        "settings.recording.bitrate" => "Bitrate",
-        "settings.recording.bitrate.desc" => "Higher is sharper and larger.",
+        "settings.recording.bitrate" => "Quality",
+        "settings.recording.bitrate.desc" => "Higher looks sharper and makes larger files.",
+        "settings.recording.quality.standard" => "Standard",
+        "settings.recording.quality.high" => "High",
+        "settings.recording.quality.max" => "Maximum",
+        "settings.recording.mbps" => "{n} Mbps",
         "settings.recording.countdown" => "Countdown",
         "settings.recording.countdown.desc" => {
             "Seconds before recording starts. 0 starts immediately."
@@ -253,18 +267,21 @@ pub fn get(key: &str) -> Option<&'static str> {
         }
         "settings.privacy.card" => "Your Captures Never Leave Your PC",
         "settings.privacy.card.body" => {
-            "No uploads, accounts or telemetry. OCR runs offline on Windows' built-in engine. The only network request is the update check below, off until you turn it on."
+            "No uploads, accounts or telemetry. Text recognition runs offline in Windows. The only network request is the update check below, off until you turn it on."
         }
         "settings.privacy.updates" => "Check for Updates",
         "settings.privacy.updates.desc" => {
             "Fetches signed release info from stinkshot.com once a day. Sends nothing else. Update Now downloads only when you click it."
+        }
+        "settings.privacy.clipboard_history" => "Add Copies to Clipboard History",
+        "settings.privacy.clipboard_history.desc" => {
+            "Lets Win+V keep what Stinkshot copies. Off keeps captures out of it."
         }
         "settings.privacy.check_now" => "Check Now",
         "settings.privacy.manual_check" => "Manual Check",
         "settings.privacy.check_failed" => "Last check failed. Try again later.",
         "settings.privacy.history.desc" => "Where captures are kept, and for how long.",
         "settings.privacy.history.open" => "History Settings",
-        "settings.privacy.updates_off" => "Turn On Update Checks First",
         "settings.privacy.update_ready" => "Stinkshot {tag} Is Available",
         "settings.privacy.update_ready.desc" => {
             "Downloads the installer and checks it against the signed release info. Then restarts on the new version."
@@ -324,9 +341,11 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.help.f.capture" => "Region, Window, Full Screen",
         "settings.help.f.capture.desc" => "Freeze the screen, then select or click.",
         "settings.help.f.scroll" => "Scrolling",
-        "settings.help.f.scroll.desc" => "Scrolls a window and stitches one tall image.",
+        "settings.help.f.scroll.desc" => "Scrolls a window and captures it as one tall image.",
         "settings.help.f.ocr" => "Copy Text (OCR)",
-        "settings.help.f.ocr.desc" => "Offline Windows OCR. History search uses it too.",
+        "settings.help.f.ocr.desc" => {
+            "Reads text offline with Windows. History search uses it too."
+        }
         "settings.help.f.annotate" => "Annotate",
         "settings.help.f.annotate.desc" => "Arrows, shapes, text, steps, blur and redact.",
         "settings.help.f.sensitive" => "Find Sensitive Info",
@@ -349,7 +368,6 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.help.open_failed.hint" => {
             "Windows could not open it. Check that the path exists."
         }
-        "settings.help.offline" => "Help is built in and works offline.",
         _ => return None,
     })
 }
@@ -361,6 +379,7 @@ pub const KEYS: &[&str] = &[
     "settings.language.desc",
     "settings.language.system",
     "settings.language.en",
+    "settings.language.es",
     "settings.language.pseudo",
     "settings.theme",
     "settings.theme.desc",
@@ -406,10 +425,15 @@ pub const KEYS: &[&str] = &[
     "settings.history.no_limit",
     "settings.history.one_day",
     "settings.history.days",
+    "settings.history.one_week",
+    "settings.history.one_month",
+    "settings.history.months",
+    "settings.history.one_year",
     "settings.history.gb",
     "settings.history.folder.desc",
     "settings.history.ocr.desc",
     "settings.history.ocr.desc_missing",
+    "settings.history.ocr.add_language",
     "settings.history.stats",
     "settings.privacy.never_checked",
     "settings.privacy.just_now",
@@ -492,6 +516,10 @@ pub const KEYS: &[&str] = &[
     "settings.capture.scrolling",
     "settings.capture.max_height",
     "settings.capture.max_height.desc",
+    "settings.capture.delay",
+    "settings.capture.delay.desc",
+    "settings.capture.scroll_from_top",
+    "settings.capture.scroll_from_top.desc",
     "settings.capture.scroll_delay",
     "settings.capture.scroll_delay.desc",
     "settings.editor.defaults",
@@ -518,6 +546,10 @@ pub const KEYS: &[&str] = &[
     "settings.recording.fps.desc",
     "settings.recording.bitrate",
     "settings.recording.bitrate.desc",
+    "settings.recording.quality.standard",
+    "settings.recording.quality.high",
+    "settings.recording.quality.max",
+    "settings.recording.mbps",
     "settings.recording.countdown",
     "settings.recording.countdown.desc",
     "settings.recording.clicks",
@@ -572,12 +604,13 @@ pub const KEYS: &[&str] = &[
     "settings.privacy.card.body",
     "settings.privacy.updates",
     "settings.privacy.updates.desc",
+    "settings.privacy.clipboard_history",
+    "settings.privacy.clipboard_history.desc",
     "settings.privacy.check_now",
     "settings.privacy.manual_check",
     "settings.privacy.check_failed",
     "settings.privacy.history.desc",
     "settings.privacy.history.open",
-    "settings.privacy.updates_off",
     "settings.privacy.update_ready",
     "settings.privacy.update_ready.desc",
     "settings.privacy.update_page.desc",
@@ -650,5 +683,4 @@ pub const KEYS: &[&str] = &[
     "settings.help.show",
     "settings.help.open_failed",
     "settings.help.open_failed.hint",
-    "settings.help.offline",
 ];

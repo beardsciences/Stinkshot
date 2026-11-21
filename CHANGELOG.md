@@ -9,9 +9,31 @@ write entries for people who use Stinkshot, not for people who read the diff.
 
 ## [Unreleased]
 
+### Added
+
+- Region After Delay: waits a few seconds (5 by default) before freezing the screen, so open
+  menus and tooltips can be captured. It is in the tray menu, can have a hotkey, and runs from
+  the command line as `stinkshot region --delay N`.
+- Scrolling capture starts from the top of the page, so a capture started halfway down still
+  gets the whole page. Turn off Start From the Top in Settings > Capture to start where you are.
+- Settings > Privacy > Add Copies to Clipboard History. Off by default: what Stinkshot copies no
+  longer shows up in Win+V.
+- Spanish (Latin American). Stinkshot follows the Windows language, or pick one in Settings >
+  General.
+
 ### Changed
 
-- Shorter wording across Settings, messages and command-line help.
+- Shorter, plainer wording across Settings, messages and command-line help. "Toast" is now
+  "notification", and "OCR language" is now "text recognition language".
+- The tray menu is shorter: Repeat Last Region, Region After Delay, Capture Selected Text and
+  Paragraph, and Pick Color are under More.
+- Recording Quality is Standard, High or Maximum instead of a bitrate in kbps.
+- Keep Captures For and Storage Limit are menus with common choices instead of typed fields.
+- When no text recognition language is installed, Settings > History has an Add a Language
+  button that opens the right Windows page.
+- Help lists only the hotkeys you have set. The Hotkeys page has a small clear button per row.
+- The first-start tour shows the tray clicks and what stays on your PC.
+- Snapping shows plain names for what is under the cursor ("Panel", "Text Box").
 
 ### Security
 

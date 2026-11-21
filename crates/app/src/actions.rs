@@ -16,6 +16,7 @@ pub enum Action {
     Scrolling,
     Ocr,
     RepeatLast,
+    DelayedRegion,
     SelectedText,
     SelectedParagraph,
     PickColor,
@@ -25,13 +26,14 @@ pub enum Action {
 
 impl Action {
     /// Menu / Settings order.
-    pub const ALL: [Action; 11] = [
+    pub const ALL: [Action; 12] = [
         Action::Region,
         Action::Window,
         Action::Fullscreen,
         Action::Scrolling,
         Action::Ocr,
         Action::RepeatLast,
+        Action::DelayedRegion,
         Action::SelectedText,
         Action::SelectedParagraph,
         Action::PickColor,
@@ -48,6 +50,7 @@ impl Action {
             Action::Scrolling => tr!("shell.action.scrolling"),
             Action::Ocr => tr!("shell.action.ocr"),
             Action::RepeatLast => tr!("shell.action.repeat_last"),
+            Action::DelayedRegion => tr!("shell.action.delayed_region"),
             Action::SelectedText => tr!("shell.action.selected_text"),
             Action::SelectedParagraph => tr!("shell.action.selected_paragraph"),
             Action::PickColor => tr!("shell.action.pick_color"),
@@ -65,6 +68,7 @@ impl Action {
             Action::Scrolling => tr!("shell.action.scrolling.desc"),
             Action::Ocr => tr!("shell.action.ocr.desc"),
             Action::RepeatLast => tr!("shell.action.repeat_last.desc"),
+            Action::DelayedRegion => tr!("shell.action.delayed_region.desc"),
             Action::SelectedText => tr!("shell.action.selected_text.desc"),
             Action::SelectedParagraph => tr!("shell.action.selected_paragraph.desc"),
             Action::PickColor => tr!("shell.action.pick_color.desc"),
@@ -82,6 +86,7 @@ impl Action {
             Action::Scrolling => "scroll",
             Action::Ocr => "ocr",
             Action::RepeatLast => "repeat",
+            Action::DelayedRegion => "delayed_region",
             Action::SelectedText => "selected_text",
             Action::SelectedParagraph => "selected_paragraph",
             Action::PickColor => "pick_color",
@@ -92,6 +97,18 @@ impl Action {
 
     pub fn from_id(id: &str) -> Option<Action> {
         Action::ALL.into_iter().find(|a| a.id() == id)
+    }
+
+    /// Listed under the tray menu's "More" submenu instead of the top level.
+    pub fn in_more_menu(self) -> bool {
+        matches!(
+            self,
+            Action::RepeatLast
+                | Action::DelayedRegion
+                | Action::SelectedText
+                | Action::SelectedParagraph
+                | Action::PickColor
+        )
     }
 
     pub fn is_recording(self) -> bool {
@@ -106,6 +123,7 @@ impl Action {
             Action::Scrolling => Command::CaptureScrolling,
             Action::Ocr => Command::OcrRegion,
             Action::RepeatLast => Command::RepeatLastRegion,
+            Action::DelayedRegion => Command::CaptureRegionDelayed { secs: None },
             Action::SelectedText => Command::CaptureSelectedText { paragraph: false },
             Action::SelectedParagraph => Command::CaptureSelectedText { paragraph: true },
             Action::PickColor => Command::PickColor,
@@ -122,6 +140,7 @@ impl Action {
             Action::Scrolling => &h.scrolling,
             Action::Ocr => &h.ocr,
             Action::RepeatLast => &h.repeat_last_region,
+            Action::DelayedRegion => &h.delayed_region,
             Action::SelectedText => &h.selected_text,
             Action::SelectedParagraph => &h.selected_paragraph,
             Action::PickColor => &h.pick_color,
@@ -138,6 +157,7 @@ impl Action {
             Action::Scrolling => &mut h.scrolling,
             Action::Ocr => &mut h.ocr,
             Action::RepeatLast => &mut h.repeat_last_region,
+            Action::DelayedRegion => &mut h.delayed_region,
             Action::SelectedText => &mut h.selected_text,
             Action::SelectedParagraph => &mut h.selected_paragraph,
             Action::PickColor => &mut h.pick_color,

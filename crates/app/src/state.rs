@@ -50,6 +50,13 @@ pub enum UpdateState {
 #[derive(Debug)]
 pub enum Command {
     CaptureRegion,
+    /// Region After Delay: count down, then open the region overlay. `None` uses
+    /// `capture.delay_seconds`.
+    CaptureRegionDelayed {
+        secs: Option<u32>,
+    },
+    /// Esc on the Region After Delay countdown.
+    DelayCancel,
     CaptureWindow,
     CaptureFullscreen,
     CaptureScrolling,

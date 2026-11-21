@@ -20,7 +20,6 @@ mod text {
     pub const HOTKEYS: &str = "settings.help.hotkeys";
     pub const HOTKEYS_DESC: &str = "settings.help.hotkeys.desc";
     pub const CHANGE_HOTKEYS: &str = "settings.help.change_hotkeys";
-    pub const NOT_SET: &str = "shell.hotkey.not_set";
     pub const EDITOR: &str = "settings.help.editor";
     pub const EDITOR_DESC: &str = "settings.help.editor.desc";
     pub const TRAY: &str = "settings.help.tray";
@@ -52,7 +51,6 @@ mod text {
     pub const SHOW: &str = "settings.help.show";
     pub const OPEN_FAILED: &str = "settings.help.open_failed";
     pub const OPEN_FAILED_HINT: &str = "settings.help.open_failed.hint";
-    pub const OFFLINE: &str = "settings.help.offline";
 }
 /// A group of (keys, what they do) rows.
 pub struct Group {
@@ -60,18 +58,15 @@ pub struct Group {
     pub rows: Vec<(String, String)>,
 }
 
-/// Global hotkeys from the live config, in Settings / tray order.
+/// Global hotkeys from the live config, in Settings / tray order. Actions without a hotkey
+/// are left out: a list of "Not Set" rows reads as unfinished, and Change Hotkeys is right
+/// below.
 pub fn hotkey_rows(cfg: &Hotkeys) -> Vec<(String, String)> {
     Action::ALL
         .iter()
-        .map(|a| {
+        .filter_map(|a| {
             let key = crate::hotkeys::display(a.hotkey(cfg));
-            let key = if key.is_empty() {
-                lookup(text::NOT_SET).to_string()
-            } else {
-                key
-            };
-            (key, a.label().to_string())
+            (!key.is_empty()).then(|| (key, a.label().to_string()))
         })
         .collect()
 }
@@ -179,12 +174,6 @@ fn locations(cfg: &Config) -> [(&'static str, PathBuf, bool); 3] {
 /// The Help page body (Settings draws the page title).
 pub fn page(ui: &mut Ui, shared: &mut Shared) {
     let p = uc::pal(shared);
-    ui.label(
-        RichText::new(lookup(text::OFFLINE))
-            .size(13.0)
-            .color(p.text_secondary),
-    );
-
     group_title(
         ui,
         shared,
@@ -251,14 +240,13 @@ mod tests {
     fn every_global_hotkey_is_listed_with_its_key() {
         let cfg = Hotkeys::default();
         let rows = hotkey_rows(&cfg);
-        assert_eq!(rows.len(), Action::ALL.len());
-        for a in Action::ALL {
-            let key = crate::hotkeys::display(a.hotkey(&cfg));
-            let want = if key.is_empty() {
-                lookup(text::NOT_SET).to_string()
-            } else {
-                key
-            };
+        let bound: Vec<Action> = Action::ALL
+            .into_iter()
+            .filter(|a| !a.hotkey(&cfg).is_empty())
+            .collect();
+        assert_eq!(rows.len(), bound.len());
+        for a in bound {
+            let want = crate::hotkeys::display(a.hotkey(&cfg));
             assert!(
                 rows.iter().any(|(k, v)| *k == want && v == a.label()),
                 "{} missing",
@@ -274,7 +262,7 @@ mod tests {
         *Action::Window.hotkey_mut(&mut cfg) = String::new();
         let rows = hotkey_rows(&cfg);
         assert!(rows.contains(&("Ctrl+Shift+Q".into(), Action::Region.label().into())));
-        assert!(rows.contains(&(lookup(text::NOT_SET).into(), Action::Window.label().into())));
+        assert!(!rows.iter().any(|(_, v)| v == Action::Window.label()));
     }
 
     #[test]
@@ -359,7 +347,6 @@ mod tests {
         for t in [
             text::HOTKEYS,
             text::CHANGE_HOTKEYS,
-            text::NOT_SET,
             text::EDITOR,
             text::TRAY,
             text::FEATURES,

@@ -674,7 +674,10 @@ pub fn scroll_capture(
             std::thread::sleep(Duration::from_millis(250));
             let outcome = drive::drive(
                 &mut stitcher,
-                &DriveParams::new(rect.h as f32 / scale, delay),
+                &DriveParams {
+                    from_top: cfg.scroll_from_top,
+                    ..DriveParams::new(rect.h as f32 / scale, delay)
+                },
                 || capture::capture_rect(rect, false).map_err(|e| format!("{e:#}")),
                 |notches| wheel.send(center, notches),
                 || match control.load(Ordering::Relaxed) {

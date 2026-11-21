@@ -563,6 +563,56 @@ fn is_tray_double_click(
         && (p.1 - cursor.1).abs() <= TRAY_DOUBLE_CLICK_SLOP_PX
 }
 
+/// The element chip's name for a UIA control type (`stinkshot_platform::uia`'s English
+/// names), in plain words and the current language: "Panel", not "Pane".
+fn control_label(control: &str) -> &'static str {
+    match control {
+        "Button" => tr!("overlay.control.button"),
+        "Calendar" => tr!("overlay.control.calendar"),
+        "Check Box" => tr!("overlay.control.check_box"),
+        "Combo Box" => tr!("overlay.control.combo_box"),
+        "Edit" => tr!("overlay.control.edit"),
+        "Hyperlink" => tr!("overlay.control.hyperlink"),
+        "Image" => tr!("overlay.control.image"),
+        "List Item" => tr!("overlay.control.list_item"),
+        "List" => tr!("overlay.control.list"),
+        "Menu" => tr!("overlay.control.menu"),
+        "Menu Bar" => tr!("overlay.control.menu_bar"),
+        "Menu Item" => tr!("overlay.control.menu_item"),
+        "Progress Bar" => tr!("overlay.control.progress_bar"),
+        "Radio Button" => tr!("overlay.control.radio_button"),
+        "Scroll Bar" => tr!("overlay.control.scroll_bar"),
+        "Slider" => tr!("overlay.control.slider"),
+        "Spinner" => tr!("overlay.control.spinner"),
+        "Status Bar" => tr!("overlay.control.status_bar"),
+        "Tab" => tr!("overlay.control.tab"),
+        "Tab Item" => tr!("overlay.control.tab_item"),
+        "Text" => tr!("overlay.control.text"),
+        "Tool Bar" => tr!("overlay.control.tool_bar"),
+        "Tooltip" => tr!("overlay.control.tooltip"),
+        "Tree" => tr!("overlay.control.tree"),
+        "Tree Item" => tr!("overlay.control.tree_item"),
+        "Custom" => tr!("overlay.control.custom"),
+        "Group" => tr!("overlay.control.group"),
+        "Thumb" => tr!("overlay.control.thumb"),
+        "Data Grid" => tr!("overlay.control.data_grid"),
+        "Data Item" => tr!("overlay.control.data_item"),
+        "Document" => tr!("overlay.control.document"),
+        "Split Button" => tr!("overlay.control.split_button"),
+        "Window" => tr!("overlay.control.window"),
+        "Pane" => tr!("overlay.control.pane"),
+        "Header" => tr!("overlay.control.header"),
+        "Header Item" => tr!("overlay.control.header_item"),
+        "Table" => tr!("overlay.control.table"),
+        "Title Bar" => tr!("overlay.control.title_bar"),
+        "Separator" => tr!("overlay.control.separator"),
+        "Semantic Zoom" => tr!("overlay.control.semantic_zoom"),
+        "App Bar" => tr!("overlay.control.app_bar"),
+        "Element" => tr!("overlay.control.element"),
+        _ => tr!("overlay.control.element"),
+    }
+}
+
 /// Text for the wheel-snapping label. `level` is 0 for the innermost element.
 fn snap_label_text(control: &str, name: &str, level: usize, count: usize) -> String {
     let name: String = name.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -572,6 +622,7 @@ fn snap_label_text(control: &str, name: &str, level: usize, count: usize) -> Str
     } else {
         name
     };
+    let control = control_label(control);
     let what = if name.is_empty() {
         control.to_string()
     } else {
@@ -2228,8 +2279,18 @@ mod esc_tests {
         );
         assert_eq!(
             snap_label_text("Pane", "  ", 2, 3),
-            "Pane \u{b7} Level 3 of 3"
+            "Panel \u{b7} Level 3 of 3"
         );
+        // Every UIA type the platform names has a plain label of its own.
+        for id in 50000..=50041 {
+            let name = stinkshot_platform::uia::control_type_name(id);
+            let label = control_label(name);
+            assert!(!label.starts_with("overlay."), "{name}");
+            assert!(
+                name == "Custom" || name == "Element" || label != "Element",
+                "{name}"
+            );
+        }
         let long = snap_label_text("Document", &"x".repeat(80), 1, 2);
         assert!(long.contains('\u{2026}'));
         assert!(long.chars().count() < 80);

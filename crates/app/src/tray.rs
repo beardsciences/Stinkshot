@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use stinkshot_core::config::{Config, parse_hex_color};
-use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
+use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 use crate::actions::Action;
@@ -110,6 +110,10 @@ impl Tray {
 
         let mut entries = Vec::new();
         let mut prev_recording = false;
+        // The less used capture modes sit in a "More" submenu, placed where the first of
+        // them would be, so the top level stays short.
+        let more = Submenu::new(tr!("shell.tray.more"), true);
+        let mut more_added = false;
         for action in Action::ALL {
             if action.is_recording() && !prev_recording {
                 menu.append(&PredefinedMenuItem::separator())
@@ -123,7 +127,15 @@ impl Tray {
                 true,
                 None,
             );
-            menu.append(&item).context("tray menu")?;
+            if action.in_more_menu() {
+                more.append(&item).context("tray menu")?;
+                if !more_added {
+                    menu.append(&more).context("tray menu")?;
+                    more_added = true;
+                }
+            } else {
+                menu.append(&item).context("tray menu")?;
+            }
             entries.push(Entry {
                 action,
                 item,
@@ -396,6 +408,20 @@ mod tests {
         assert!(Action::from_id(ID_HISTORY).is_none());
         assert!(!recent(None, DOUBLE_CLICK_QUIET));
         assert!(recent(Some(Instant::now()), DOUBLE_CLICK_QUIET));
+    }
+
+    #[test]
+    fn more_submenu_holds_the_less_used_modes() {
+        let top: Vec<_> = Action::ALL.iter().filter(|a| !a.in_more_menu()).collect();
+        // Five capture modes and the two recordings stay at the top level.
+        assert_eq!(top.len(), 7, "{top:?}");
+        assert!(!Action::Region.in_more_menu());
+        assert!(Action::PickColor.in_more_menu());
+        assert!(
+            Action::ALL
+                .iter()
+                .all(|a| !(a.is_recording() && a.in_more_menu()))
+        );
     }
 
     #[test]

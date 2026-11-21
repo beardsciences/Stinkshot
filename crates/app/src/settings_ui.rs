@@ -37,6 +37,8 @@ use crate::toast::ui_common as uc;
 const NAV_W: f32 = 220.0;
 const CONTENT_MAX_W: f32 = 760.0;
 const REPO_URL: &str = "https://code.mccullough.dev/christian/stinkshot";
+/// Windows Settings > Time & language > Language & region, where text recognition is added.
+const LANGUAGE_SETTINGS_URI: &str = "ms-settings:regionlanguage";
 const ISSUES_URL: &str = "https://code.mccullough.dev/christian/stinkshot/issues";
 const DEFAULT_ACCENTS: [&str; 4] = ["#7fd36a", "#4cc2ff", "#ffb454", "#c49cff"];
 
@@ -257,6 +259,11 @@ fn days_label(days: u32) -> String {
     match days {
         0 => tr!("settings.history.forever").into(),
         1 => tr!("settings.history.one_day").into(),
+        7 => tr!("settings.history.one_week").into(),
+        30 => tr!("settings.history.one_month").into(),
+        90 => tr!("settings.history.months", n = 3),
+        180 => tr!("settings.history.months", n = 6),
+        365 => tr!("settings.history.one_year").into(),
         n => tr!("settings.history.days", n = n),
     }
 }
@@ -265,8 +272,53 @@ fn gb_label(gb: f32) -> String {
     if gb <= 0.0 {
         tr!("settings.history.no_limit").into()
     } else {
-        tr!("settings.history.gb", gb = format!("{gb:.1}"))
+        tr!("settings.history.gb", gb = slider_text(f64::from(gb)))
     }
+}
+
+/// Recording Quality choices, in kbps: Standard, High (the default), Maximum.
+const QUALITY_KBPS: &[u32] = &[8000, 16000, 32000];
+
+/// "High (16 Mbps)". A bitrate set in the config file shows as "24 Mbps".
+fn quality_label(kbps: u32) -> String {
+    let mbps = slider_text(f64::from(kbps) / 1000.0);
+    let name = match kbps {
+        8000 => tr!("settings.recording.quality.standard"),
+        16000 => tr!("settings.recording.quality.high"),
+        32000 => tr!("settings.recording.quality.max"),
+        _ => return tr!("settings.recording.mbps", n = mbps),
+    };
+    format!("{name} ({})", tr!("settings.recording.mbps", n = mbps))
+}
+
+/// Keep Captures For choices, in days (0 = forever).
+const KEEP_DAYS: &[u32] = &[0, 7, 30, 90, 180, 365];
+/// Storage Limit choices, in GB (0 = no limit).
+const MAX_GB: &[f32] = &[0.0, 1.0, 5.0, 10.0, 25.0, 50.0, 100.0];
+
+/// A dropdown of preset values. A value set elsewhere (an older version, the config file)
+/// is kept and listed too, so opening the menu never changes it.
+fn preset_combo<T: Copy + PartialEq>(
+    ui: &mut Ui,
+    id: &str,
+    v: &mut T,
+    presets: &[T],
+    label: fn(T) -> String,
+) {
+    let mut options: Vec<T> = presets.to_vec();
+    if !options.contains(v) {
+        options.push(*v);
+    }
+    egui::ComboBox::from_id_salt(id)
+        .icon(widgets::combo_chevron)
+        .selected_text(label(*v))
+        .width(150.0)
+        .show_ui(ui, |ui| {
+            crate::theme::popup_rows(ui);
+            for o in options {
+                ui.selectable_value(v, o, label(o));
+            }
+        });
 }
 
 /// Whether retention `new` (days, GB; 0 = no limit) deletes sooner than `old` in either
@@ -1091,8 +1143,18 @@ fn slider_row<N: egui::emath::Numeric>(
         ui.spacing_mut().interact_size.y = 24.0;
         // Value box the same height so the two share a centre line.
         ui.spacing_mut().button_padding.y = 3.0;
-        ui.add(egui::Slider::new(v, range).suffix(suffix.to_string()));
+        ui.add(
+            egui::Slider::new(v, range)
+                .suffix(suffix.to_string())
+                .custom_formatter(|v, _| slider_text(v)),
+        );
     });
+}
+
+/// A slider value with at most one decimal and no ".0": "4 px", "2.5 px", "16000 kbps".
+fn slider_text(v: f64) -> String {
+    let s = format!("{v:.1}");
+    s.strip_suffix(".0").map(str::to_string).unwrap_or(s)
 }
 
 fn group_title(ui: &mut Ui, p: &theme::Palette, text: &str) {
@@ -1514,11 +1576,21 @@ impl SettingsWindow {
             let mut toggle_capture = false;
             widgets::setting_row_alert(ui, field.label(), &desc, alert, |ui| {
                 ui.horizontal(|ui| {
-                    if !current.is_empty()
-                        && !capturing
-                        && widgets::button(ui, tr!("settings.hotkeys.clear")).clicked()
-                    {
-                        clear = true;
+                    // A quiet x instead of a Clear button on every row. Rows without a key
+                    // keep the space so the key buttons line up.
+                    if !current.is_empty() && !capturing {
+                        if widgets::icon_button(
+                            ui,
+                            Icon::Close,
+                            tr!("settings.hotkeys.clear"),
+                            false,
+                        )
+                        .clicked()
+                        {
+                            clear = true;
+                        }
+                    } else {
+                        ui.add_space(34.0 + ui.spacing().item_spacing.x);
                     }
                     let label = if capturing {
                         tr!("settings.hotkeys.press_keys").to_string()
@@ -1768,6 +1840,14 @@ impl SettingsWindow {
             },
         );
 
+        slider_row(
+            ui,
+            tr!("settings.capture.delay"),
+            tr!("settings.capture.delay.desc"),
+            &mut c.delay_seconds,
+            1..=30,
+            " s",
+        );
         group_title(ui, p, tr!("settings.capture.scrolling"));
         slider_row(
             ui,
@@ -1784,6 +1864,12 @@ impl SettingsWindow {
             &mut c.scroll_delay_ms,
             30..=1000,
             " ms",
+        );
+        toggle_row(
+            ui,
+            tr!("settings.capture.scroll_from_top"),
+            tr!("settings.capture.scroll_from_top.desc"),
+            &mut c.scroll_from_top,
         );
         let _ = accent;
     }
@@ -1933,13 +2019,19 @@ impl SettingsWindow {
             &mut r.fps,
             &as_refs(&fps_labels(&[30, 60, 120])),
         );
-        slider_row(
+        widgets::setting_row(
             ui,
             tr!("settings.recording.bitrate"),
             tr!("settings.recording.bitrate.desc"),
-            &mut r.bitrate_kbps,
-            1000..=80000,
-            " kbps",
+            |ui| {
+                preset_combo(
+                    ui,
+                    "bitrate",
+                    &mut r.bitrate_kbps,
+                    QUALITY_KBPS,
+                    quality_label,
+                );
+            },
         );
         slider_row(
             ui,
@@ -2139,20 +2231,33 @@ impl SettingsWindow {
             shared.config.history.folder.clear();
         }
         let _ = default_folder;
-        let ocr_desc = if has_ocr {
-            tr!("settings.history.ocr.desc").to_string()
+        if has_ocr {
+            toggle_row(
+                ui,
+                tr!("settings.history.ocr"),
+                tr!("settings.history.ocr.desc"),
+                &mut shared.config.history.ocr_index,
+            );
         } else {
-            tr!(
-                "settings.history.ocr.desc_missing",
-                help = crate::l10n::tr!("shell.ocr.none.body")
-            )
-        };
-        toggle_row(
-            ui,
-            tr!("settings.history.ocr"),
-            &ocr_desc,
-            &mut shared.config.history.ocr_index,
-        );
+            // No language can read text: a button that opens the right Windows page beats
+            // spelling out the path to it.
+            widgets::setting_row(
+                ui,
+                tr!("settings.history.ocr"),
+                tr!("settings.history.ocr.desc_missing"),
+                |ui| {
+                    widgets::toggle(ui, &mut shared.config.history.ocr_index);
+                    ui.add_space(8.0);
+                    if widgets::button(ui, tr!("settings.history.ocr.add_language")).clicked()
+                        && let Err(e) = stinkshot_platform::system::open_path(std::path::Path::new(
+                            LANGUAGE_SETTINGS_URI,
+                        ))
+                    {
+                        log::warn!("open language settings: {e:#}");
+                    }
+                },
+            );
+        }
         // A tighter limit makes the retention pass delete for good, so it is staged and
         // only saved by Apply. A looser one saves at once.
         let saved = (
@@ -2169,27 +2274,7 @@ impl SettingsWindow {
             tr!("settings.history.keep"),
             tr!("settings.history.keep.desc"),
             |ui| {
-                ui.add(
-                    egui::DragValue::new(&mut shown.0)
-                        .range(0..=3650)
-                        // Typed only: no speed means dragging and the arrow keys change
-                        // nothing (one ArrowUp on "Forever" used to mean 1 day).
-                        .speed(0.0)
-                        // Never act on a half-typed number.
-                        .update_while_editing(false)
-                        .custom_formatter(|n, _| days_label(n as u32))
-                        .custom_parser(|s| {
-                            let t = s.trim().to_lowercase();
-                            if t.starts_with("forever") || t.starts_with("never") {
-                                Some(0.0)
-                            } else {
-                                t.split_whitespace()
-                                    .next()
-                                    .and_then(|n| n.parse::<f64>().ok())
-                            }
-                        }),
-                )
-                .on_hover_cursor(egui::CursorIcon::Text);
+                preset_combo(ui, "keep_days", &mut shown.0, KEEP_DAYS, days_label);
             },
         );
         widgets::setting_row(
@@ -2197,24 +2282,7 @@ impl SettingsWindow {
             tr!("settings.history.limit"),
             tr!("settings.history.limit.desc"),
             |ui| {
-                ui.add(
-                    egui::DragValue::new(&mut shown.1)
-                        .range(0.0..=2000.0)
-                        .speed(0.0)
-                        .update_while_editing(false)
-                        .custom_formatter(|n, _| gb_label(n as f32))
-                        .custom_parser(|s| {
-                            let t = s.trim().to_lowercase();
-                            if t.starts_with("no") {
-                                Some(0.0)
-                            } else {
-                                t.split_whitespace()
-                                    .next()
-                                    .and_then(|n| n.parse::<f64>().ok())
-                            }
-                        }),
-                )
-                .on_hover_cursor(egui::CursorIcon::Text);
+                preset_combo(ui, "max_gb", &mut shown.1, MAX_GB, gb_label);
             },
         );
         if shown != before {
@@ -2399,31 +2467,25 @@ impl SettingsWindow {
             .update_requested_at
             .is_some_and(|t| t.elapsed() < Duration::from_secs(4));
         let mut check = false;
-        widgets::setting_row(
-            ui,
-            tr!("settings.privacy.manual_check"),
-            &if requested {
-                tr!("settings.privacy.check_requested").to_string()
-            } else if shared.update_check_failed {
-                tr!("settings.privacy.check_failed").to_string()
-            } else {
-                last
-            },
-            |ui| {
-                ui.add_enabled_ui(enabled, |ui| {
+        // Only while update checks are on: a disabled button and a note about it was noise.
+        if enabled {
+            widgets::setting_row(
+                ui,
+                tr!("settings.privacy.manual_check"),
+                &if requested {
+                    tr!("settings.privacy.check_requested").to_string()
+                } else if shared.update_check_failed {
+                    tr!("settings.privacy.check_failed").to_string()
+                } else {
+                    last
+                },
+                |ui| {
                     if widgets::button(ui, tr!("settings.privacy.check_now")).clicked() {
                         check = true;
                     }
-                });
-                if !enabled {
-                    ui.label(
-                        RichText::new(tr!("settings.privacy.updates_off"))
-                            .size(12.0)
-                            .color(p.text_tertiary),
-                    );
-                }
-            },
-        );
+                },
+            );
+        }
         if check {
             shared.outbox.push(Command::CheckForUpdates);
             self.update_requested_at = Some(Instant::now());
@@ -2432,6 +2494,12 @@ impl SettingsWindow {
             ui.ctx().request_repaint_after(Duration::from_millis(500));
         }
         self.update_row(ui, shared);
+        toggle_row(
+            ui,
+            tr!("settings.privacy.clipboard_history"),
+            tr!("settings.privacy.clipboard_history.desc"),
+            &mut shared.config.privacy.clipboard_history,
+        );
         // The history rows are History's own; search shows them there only.
         if search::searching() {
             return;
@@ -2725,9 +2793,17 @@ mod tests {
     fn retention_labels() {
         assert_eq!(days_label(0), "Forever");
         assert_eq!(days_label(1), "1 Day");
-        assert_eq!(days_label(90), "90 Days");
+        assert_eq!(days_label(90), "3 Months");
+        assert_eq!(days_label(365), "1 Year");
+        assert_eq!(days_label(45), "45 Days");
         assert_eq!(gb_label(0.0), "No Limit");
-        assert_eq!(gb_label(5.0), "5.0 GB");
+        assert_eq!(gb_label(5.0), "5 GB");
+        assert_eq!(gb_label(2.5), "2.5 GB");
+        assert_eq!(quality_label(16000), "High (16 Mbps)");
+        assert_eq!(quality_label(24500), "24.5 Mbps");
+        // Every preset has its own label.
+        let days: std::collections::HashSet<_> = KEEP_DAYS.iter().map(|d| days_label(*d)).collect();
+        assert_eq!(days.len(), KEEP_DAYS.len());
     }
 
     #[test]

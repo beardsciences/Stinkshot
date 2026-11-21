@@ -6,6 +6,7 @@
 //! no system input, the pointer never moves, other windows are never touched.
 //!
 //! `cargo run -p stinkshot --example scroll_harness -- [instant|smooth|slow|lazy|web|all] [DELAY_MS]`
+//! (`START_MID=1`: start halfway down with Start From the Top on)
 //!
 //! Modes: `lazy` shows a skeleton placeholder with a spinner for 400-1200 ms (random per
 //! 100-row block) wherever rows first come into view; `web` is what a browser does to a
@@ -651,14 +652,32 @@ fn run(mode: Mode, delay_ms: u64) -> anyhow::Result<bool> {
         ..StitchOptions::default()
     });
     let center = (rect.x + rect.w / 2, rect.y + rect.h / 2);
+    let wheel = |notches: i32| {
+        // WM_MOUSEWHEEL to our own window only (lParam = pointer position, unused).
+        let wp = WPARAM(((notches * 120) as u16 as usize) << 16);
+        let lp = LPARAM((((center.1 & 0xFFFF) << 16) | (center.0 & 0xFFFF)) as isize);
+        unsafe {
+            let _ = PostMessageW(Some(hwnd), WM_MOUSEWHEEL, wp, lp);
+        }
+    };
+    // START_MID=1: scroll halfway down first, then capture with Start From the Top on. The
+    // result must still be the whole page.
+    let start_mid = std::env::var("START_MID").as_deref() == Ok("1");
+    if start_mid {
+        wheel(-((DOC_H as i32 / 2) / NOTCH_PX));
+        std::thread::sleep(Duration::from_millis(2500));
+    }
     let t0 = Instant::now();
     let mut capture_ms = Vec::new();
     let out = drive::drive(
         &mut stitcher,
-        &DriveParams::new(
-            rect.h as f32 / mon.scale.max(0.1),
-            Duration::from_millis(delay_ms),
-        ),
+        &DriveParams {
+            from_top: start_mid,
+            ..DriveParams::new(
+                rect.h as f32 / mon.scale.max(0.1),
+                Duration::from_millis(delay_ms),
+            )
+        },
         || {
             let t = Instant::now();
             let r = capture::capture_rect(rect, false).map_err(|e| format!("{e:#}"));
@@ -673,14 +692,7 @@ fn run(mode: Mode, delay_ms: u64) -> anyhow::Result<bool> {
             }
             r
         },
-        |notches| {
-            // WM_MOUSEWHEEL to our own window only (lParam = pointer position, unused).
-            let wp = WPARAM(((notches * 120) as u16 as usize) << 16);
-            let lp = LPARAM((((center.1 & 0xFFFF) << 16) | (center.0 & 0xFFFF)) as isize);
-            unsafe {
-                let _ = PostMessageW(Some(hwnd), WM_MOUSEWHEEL, wp, lp);
-            }
-        },
+        wheel,
         || DriveControl::Run,
         |st, _| {
             if std::env::var("STITCH_LOG").as_deref() == Ok("1") {

@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 mod en;
+mod es;
 
 /// A UI language. Add a variant per translation (see docs/notes/l10n.md).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -20,12 +21,14 @@ pub enum Lang {
     En = 0,
     /// Accented and ~35% longer English for spotting hard-coded strings and clipping.
     Pseudo = 1,
+    Es = 2,
 }
 
 impl Lang {
     fn from_u8(v: u8) -> Self {
         match v {
             1 => Lang::Pseudo,
+            2 => Lang::Es,
             _ => Lang::En,
         }
     }
@@ -35,17 +38,19 @@ impl Lang {
         match self {
             Lang::En => "en",
             Lang::Pseudo => "pseudo",
+            Lang::Es => "es",
         }
     }
 }
 
 /// Real translations a "system" setting can resolve to (Pseudo is never picked by locale).
-const SHIPPED: &[Lang] = &[Lang::En];
+const SHIPPED: &[Lang] = &[Lang::En, Lang::Es];
 
 /// `(config value, label key)` for the Language setting. "system" comes first.
 pub const CHOICES: &[(&str, &str)] = &[
     ("system", "settings.language.system"),
     ("en", "settings.language.en"),
+    ("es", "settings.language.es"),
     ("pseudo", "settings.language.pseudo"),
 ];
 
@@ -116,6 +121,18 @@ fn english(key: &str) -> Option<&'static str> {
     }
 }
 
+/// Spanish string for `key`, when translated.
+fn spanish(key: &str) -> Option<&'static str> {
+    let (group, _) = key.split_once('.')?;
+    match group {
+        "settings" => es::settings::get(key),
+        "history" => es::history::get(key),
+        "overlay" => es::overlay::get(key),
+        "shell" => es::shell::get(key),
+        _ => None,
+    }
+}
+
 /// Looks `key` up in the current language. Prefer the `tr!` macro.
 pub fn lookup(key: &'static str) -> &'static str {
     let base = english(key).unwrap_or_else(|| {
@@ -125,6 +142,7 @@ pub fn lookup(key: &'static str) -> &'static str {
     });
     match lang() {
         Lang::En => base,
+        Lang::Es => spanish(key).unwrap_or(base),
         // An empty string means "no text" (a settings row without a description).
         Lang::Pseudo if base.is_empty() => base,
         Lang::Pseudo => pseudo_cached(key, base),
@@ -213,6 +231,99 @@ mod tests {
         assert_eq!(resolve("", false, String::new), Lang::En);
         assert_eq!(resolve("pseudo", false, || "en-US".into()), Lang::Pseudo);
         assert_eq!(resolve("en", true, || "en-US".into()), Lang::Pseudo);
+        assert_eq!(resolve("system", false, || "es-MX".into()), Lang::Es);
+        assert_eq!(resolve("system", false, || "es_ES".into()), Lang::Es);
+        assert_eq!(resolve("es", false, || "en-US".into()), Lang::Es);
+        assert_eq!(resolve("es", true, || "en-US".into()), Lang::Pseudo);
+    }
+
+    /// Keys in a translation's source file (`"group.key" =>` arms).
+    fn arm_keys(src: &str) -> Vec<&str> {
+        src.lines()
+            .filter_map(|l| {
+                let l = l.trim_start().strip_prefix('"')?;
+                let (k, rest) = l.split_once('"')?;
+                rest.trim_start().starts_with("=>").then_some(k)
+            })
+            .collect()
+    }
+
+    /// `{name}` placeholders in a string, sorted.
+    fn placeholders(s: &str) -> Vec<&str> {
+        let mut v: Vec<&str> = s
+            .split('{')
+            .skip(1)
+            .filter_map(|p| p.split_once('}').map(|(n, _)| n))
+            .collect();
+        v.sort_unstable();
+        v
+    }
+
+    /// Every Spanish key exists in English, keeps the same placeholders (code fills them by
+    /// name) and follows the same punctuation rules.
+    #[test]
+    fn spanish_matches_english() {
+        let files = [
+            include_str!("es/settings.rs"),
+            include_str!("es/history.rs"),
+            include_str!("es/overlay.rs"),
+            include_str!("es/shell.rs"),
+        ];
+        let mut bad = Vec::new();
+        let mut n = 0;
+        for src in files {
+            for k in arm_keys(src) {
+                n += 1;
+                let Some(en) = english(k) else {
+                    bad.push(format!("{k}: not an English key"));
+                    continue;
+                };
+                let es = spanish(k).unwrap_or_default();
+                if placeholders(en) != placeholders(es) {
+                    bad.push(format!("{k}: placeholders differ"));
+                }
+                if es.contains('\u{2014}') || es.contains("; ") {
+                    bad.push(format!("{k}: em dash or semicolon join"));
+                }
+                if en.is_empty() != es.is_empty() {
+                    bad.push(format!("{k}: empty in one language only"));
+                }
+            }
+        }
+        assert!(n > 900, "only {n} Spanish strings found");
+        assert!(bad.is_empty(), "{}", bad.join("\n"));
+    }
+
+    /// Spanish covers every English string except ones that read the same (units, names).
+    #[test]
+    fn spanish_is_complete() {
+        let mut missing = Vec::new();
+        for keys in [
+            en::settings::KEYS,
+            en::history::KEYS,
+            en::overlay::KEYS,
+            en::shell::KEYS,
+        ] {
+            for k in keys {
+                let en = english(k).unwrap_or_default();
+                if spanish(k).is_none() && en.chars().any(|c| c.is_ascii_lowercase()) {
+                    missing.push(*k);
+                }
+            }
+        }
+        // Same in both languages: names, units and formats.
+        const SAME: &[&str] = &[
+            "settings.language.en",
+            "settings.language.es",
+            "settings.language.pseudo",
+            "overlay.px",
+            "overlay.px_suffix",
+            "overlay.loupe.xy",
+            "overlay.element.named",
+            "overlay.measure.main",
+        ];
+        missing.retain(|k| !SAME.contains(k));
+        assert!(missing.is_empty(), "untranslated: {missing:?}");
     }
 
     #[test]

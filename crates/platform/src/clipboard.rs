@@ -238,7 +238,7 @@ fn set_all(blocks: Vec<(u32, Block)>) -> anyhow::Result<()> {
 
 /// The format that tells Windows not to sync a copy to the user's other devices through
 /// Cloud Clipboard: a DWORD 0 under "CanUploadToCloudClipboard". Captures and copied text
-/// stay on this PC. Local clipboard history (Win+V) is a separate format and is left alone.
+/// stay on this PC.
 fn no_cloud_upload() -> (u32, Vec<u8>) {
     (
         name_format("CanUploadToCloudClipboard"),
@@ -246,10 +246,38 @@ fn no_cloud_upload() -> (u32, Vec<u8>) {
     )
 }
 
-/// Replace the clipboard contents with `payloads`, marked as not for Cloud Clipboard.
-/// Every write goes through here so none can miss the marker.
+/// The format that keeps a copy out of local clipboard history (Win+V): a DWORD 0 under
+/// "CanIncludeInClipboardHistory".
+fn no_history() -> (u32, Vec<u8>) {
+    (
+        name_format("CanIncludeInClipboardHistory"),
+        0u32.to_le_bytes().to_vec(),
+    )
+}
+
+/// Whether copies may appear in Win+V. Off until the app applies the setting.
+static ALLOW_HISTORY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Applies the "Add Copies to Clipboard History" setting to every later copy.
+pub fn set_allow_history(allow: bool) {
+    ALLOW_HISTORY.store(allow, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The markers every write carries: never Cloud Clipboard, and Win+V only when allowed.
+fn markers(allow_history: bool) -> Vec<(u32, Vec<u8>)> {
+    let mut v = vec![no_cloud_upload()];
+    if !allow_history {
+        v.push(no_history());
+    }
+    v
+}
+
+/// Replace the clipboard contents with `payloads` plus the markers. Every write goes through
+/// here so none can miss them.
 fn replace_contents(mut payloads: Vec<(u32, Vec<u8>)>) -> anyhow::Result<()> {
-    payloads.push(no_cloud_upload());
+    payloads.extend(markers(
+        ALLOW_HISTORY.load(std::sync::atomic::Ordering::Relaxed),
+    ));
     let blocks = blocks(payloads)?;
     let _g = ClipboardGuard::open()?;
     // SAFETY: clipboard is open on this thread.
@@ -498,6 +526,16 @@ mod tests {
         assert!((0xC000..=0xFFFF).contains(&format), "{format:#x}");
         assert_eq!(format, no_cloud_upload().0);
         assert_ne!(format, png_format());
+    }
+
+    #[test]
+    fn history_marker_only_when_not_allowed() {
+        let off = markers(false);
+        assert_eq!(off.len(), 2);
+        assert!(off.contains(&no_cloud_upload()));
+        assert!(off.contains(&no_history()));
+        assert_ne!(no_history().0, no_cloud_upload().0);
+        assert_eq!(markers(true), vec![no_cloud_upload()]);
     }
 
     #[test]
