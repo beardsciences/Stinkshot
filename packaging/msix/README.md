@@ -109,3 +109,58 @@ Features (one per line in Partner Center):
 - Searchable History of every capture
 - MP4 and GIF recording with trim
 - English and Spanish
+
+Screenshot captions, in order (`dist\store\listing\`):
+
+1. Annotate in place: arrows, steps, labels
+2. Every capture in History
+3. Search captures by the text in them
+4. Nothing leaves your PC
+5. Record MP4 or GIF
+6. Light and dark themes
+7. Filter History by app
+8. Free and open source
+
+## Store listing text, Spanish (es)
+
+Latin American Spanish, using the app's own terms (Historial, Copiar texto, Captura con
+desplazamiento). Screenshots: `dist\store\listing-es\`.
+
+Descripción breve:
+
+> Capturas y grabaciones de pantalla privadas para Windows. Nada sale de tu PC.
+
+Descripción:
+
+> Stinkshot captura una región, una ventana, la pantalla completa o una página entera con
+> desplazamiento, y te deja anotarla al instante: flechas, formas, texto, pasos numerados,
+> resaltados, desenfoque y recuadros opacos que destruyen los píxeles que cubren.
+>
+> Copiar texto lee el texto de todo lo que aparece en pantalla, sin conexión, con el
+> reconocimiento de texto del propio Windows. El Historial guarda cada captura y permite buscarla por el texto que
+> contiene. Graba la pantalla en MP4 o GIF, con audio del sistema, micrófono y una burbuja de
+> cámara web, y recorta antes de guardar.
+>
+> Sin subidas, cuentas ni telemetría. Stinkshot no realiza ninguna solicitud de red.
+>
+> Gratis y de código abierto (GPL-3.0).
+
+Características (una por línea en Partner Center):
+
+- Captura de región, ventana, pantalla completa y con desplazamiento
+- Anota al instante, con recuadros opacos que destruyen los píxeles
+- Copia texto de la pantalla, sin conexión
+- Historial de todas tus capturas, con búsqueda
+- Grabación en MP4 y GIF con recorte
+- En inglés y español
+
+Títulos de las capturas, en orden:
+
+1. Anota al instante: flechas, pasos y texto
+2. Todas tus capturas en el Historial
+3. Busca capturas por el texto que contienen
+4. Nada sale de tu PC
+5. Graba en MP4 o GIF
+6. Temas claro y oscuro
+7. Filtra el Historial por aplicación
+8. Gratis y de código abierto

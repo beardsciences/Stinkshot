@@ -8,7 +8,7 @@ Runs on Windows PowerShell 5.1 and PowerShell 7. Everything lands in -OutDir
 (default dist\<version>); docs/RELEASING.md has the full procedure and the publish steps.
 Last, scripts/site-media.ps1 renders the site's clips and screenshots from the same commit
 into the site repo's media-staging\ (not live) and the Store screenshots into
-dist\store\listing\. -SkipMedia skips that.
+dist\store\listing\ (English) and dist\store\listing-es\ (Spanish). -SkipMedia skips that.
 
 Release builds go to -TargetDir (default target-dist next to the repo's target folder),
 never to target\ itself, so a running target\release\stinkshot.exe is not touched.
@@ -469,6 +469,9 @@ try {
         $ps = (Get-Process -Id $PID).Path
         Invoke-Native $ps @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $PSScriptRoot 'site-media.ps1'),
             '-Version', $Version, '-Ref', $commit, '-Jobs', "$mediaJobs")
+        # The Spanish Store set: same harness build, Store stills only.
+        Invoke-Native $ps @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $PSScriptRoot 'site-media.ps1'),
+            '-Version', $Version, '-Ref', $commit, '-Jobs', "$mediaJobs", '-StoreOnly', '-Lang', 'es')
     }
 
     Step 'done'
@@ -482,7 +485,7 @@ try {
         Write-Host 'Next steps (docs/RELEASING.md):'
         Write-Host "  1. Smoke test:  powershell -ExecutionPolicy Bypass -File scripts/smoke-test.ps1 -DistDir `"$OutDir`" -TargetDir `"$TargetDir`""
         Write-Host "  2. Tag $commit as $Tag and push the branch and the tag."
-        Write-Host "  3. Look at the staged media (stinkshot-site\media-staging) and dist\store\listing. Site: in the stinkshot-site repo, tools/update-site.ps1 -DistDir `"$OutDir`" (dry run), then again with -Apply."
+        Write-Host "  3. Look at the staged media (stinkshot-site\media-staging), dist\store\listing and listing-es. Site: in the stinkshot-site repo, tools/update-site.ps1 -DistDir `"$OutDir`" (dry run), then again with -Apply."
         Write-Host '  4. Run the checks in the site''s DEPLOY.md (step 4).'
         Write-Host "  5. Forgejo release:  powershell -ExecutionPolicy Bypass -File scripts/publish-forgejo.ps1 -Version $Version -DistDir `"$OutDir`""
         Write-Host "  6. GitHub release on the mirror: gh release create $Tag (docs/RELEASING.md, step 8)."

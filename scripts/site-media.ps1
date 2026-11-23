@@ -15,7 +15,7 @@
       img\             the Settings crops the site shows (tools\crop_shots.py)
       shots\           whole-window pictures, dark and light, with shots.json
       media-source.json  version and commit they were rendered from
-    -StoreDir (default dist\store\listing)
+    -StoreDir (default dist\store\listing, or listing-<Lang> with -Lang)
       01-*.png ...     Microsoft Store screenshots, 2560x1440 PNG
 
   The site's tools\update-site.ps1 -Apply copies video\ and img\ into site\ and writes
@@ -31,6 +31,9 @@
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File scripts\site-media.ps1 -Ref HEAD -ShotsOnly
+
+.EXAMPLE
+  powershell -ExecutionPolicy Bypass -File scripts\site-media.ps1 -Version 0.1.6 -StoreOnly -Lang es
 #>
 [CmdletBinding()]
 param(
@@ -53,6 +56,9 @@ param(
     [switch]$ShotsOnly,
     # Store screenshots only; the staged site media is left as it is.
     [switch]$StoreOnly,
+    # UI language of the Store screenshots (en, es). Needs -StoreOnly unless en; the default
+    # -StoreDir becomes dist\store\listing-<Lang>. Site media is always English.
+    [string]$Lang = 'en',
     # Extra files (repo-relative) to copy from this checkout over the commit, for trying an
     # uncommitted harness hook. Never for a release.
     [string[]]$Overlay = @(),
@@ -79,7 +85,12 @@ $bench = Join-Path $side 'stinkshot-bench'
 if (-not $SiteDir) { $SiteDir = Join-Path $side 'stinkshot-site' }
 if (-not $WorkDir) { $WorkDir = Join-Path $bench 'site-media' }
 if (-not $TargetDir) { $TargetDir = Join-Path $bench 'target-demo-clips' }
-if (-not $StoreDir) { $StoreDir = Join-Path $repo 'dist\store\listing' }
+$Lang = $Lang.ToLowerInvariant()
+if ($Lang -notin 'en', 'es') { Fail "-Lang $Lang is not a shipped language (en, es)" }
+if ($Lang -ne 'en' -and -not $StoreOnly) { Fail "-Lang $Lang needs -StoreOnly: the site media is English only" }
+if (-not $StoreDir) {
+    $StoreDir = Join-Path $repo $(if ($Lang -eq 'en') { 'dist\store\listing' } else { "dist\store\listing-$Lang" })
+}
 if (-not $Version) {
     $m = [regex]::Match((Get-Content -Raw (Join-Path $repo 'Cargo.toml')), '(?ms)^\[workspace\.package\].*?^version\s*=\s*"([^"]+)"')
     if (-not $m.Success) { Fail 'workspace.package version not found in Cargo.toml' }
@@ -148,7 +159,7 @@ try {
 
     Step 'Render (the app UI, offscreen)'
     $saved = @{}
-    foreach ($n in 'CARGO_TARGET_DIR', 'CARGO_BUILD_JOBS', 'STINKSHOT_DEMO_DIR', 'STINKSHOT_FFMPEG', 'STINKSHOT_DEMO_ONLY', 'STINKSHOT_DEMO_SCALE', 'STINKSHOT_DEMO_HOME', 'STINKSHOT_DEMO_STORE', 'STINKSHOT_PROFILE') {
+    foreach ($n in 'CARGO_TARGET_DIR', 'CARGO_BUILD_JOBS', 'STINKSHOT_DEMO_DIR', 'STINKSHOT_FFMPEG', 'STINKSHOT_DEMO_ONLY', 'STINKSHOT_DEMO_SCALE', 'STINKSHOT_DEMO_HOME', 'STINKSHOT_DEMO_STORE', 'STINKSHOT_DEMO_LANG', 'STINKSHOT_PROFILE') {
         $saved[$n] = [Environment]::GetEnvironmentVariable($n)
     }
     $clips = @('select', 'annotate', 'redact', 'history', 'steps', 'magnify', 'measure', 'picker', 'beautify', 'sensitive', 'multi')
@@ -170,6 +181,7 @@ try {
             $env:STINKSHOT_DEMO_DIR = $demo
             $env:STINKSHOT_DEMO_SCALE = $null
             $env:STINKSHOT_DEMO_STORE = '1'
+            $env:STINKSHOT_DEMO_LANG = $Lang
             $env:STINKSHOT_DEMO_ONLY = $sets -join ','
             Run cargo @('test', '--locked', '-p', 'stinkshot', 'demo_clips', '--', '--ignored', '--nocapture')
             if (-not $StoreOnly) {
@@ -177,6 +189,7 @@ try {
                 $env:STINKSHOT_DEMO_DIR = $demoSite
                 $env:STINKSHOT_DEMO_SCALE = '0.8333333'
                 $env:STINKSHOT_DEMO_STORE = $null
+                $env:STINKSHOT_DEMO_LANG = 'en'
                 $env:STINKSHOT_DEMO_ONLY = 'shots'
                 Run cargo @('test', '--locked', '-p', 'stinkshot', 'demo_clips', '--', '--ignored', '--nocapture')
             }
@@ -189,7 +202,7 @@ try {
         Step 'Store screenshots'
         Run $py @('-I', (Join-Path $repo 'scripts\demo-clips\release_shots.py'),
             '--store-stills', (Join-Path $demo 'stills'), '--store-out', $StoreDir,
-            '--version', $Version, '--commit', $commit)
+            '--version', $Version, '--commit', $commit, '--lang', $Lang)
         return
     }
     if (Test-Path $OutDir) { Remove-Item -Recurse -Force $OutDir }

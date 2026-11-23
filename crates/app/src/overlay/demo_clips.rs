@@ -598,8 +598,11 @@ fn demo_clips() {
             std::env::remove_var("STINKSHOT_PROFILE");
         }
     }
-    // STINKSHOT_DEMO_LANG=es checks a translation for clipping (site media stays English).
-    crate::l10n::apply(&std::env::var("STINKSHOT_DEMO_LANG").unwrap_or_else(|_| "en".into()));
+    // STINKSHOT_DEMO_LANG=es: UI language, for checking a translation and for the Spanish
+    // Store screenshots (site media stays English).
+    let lang = std::env::var("STINKSHOT_DEMO_LANG").unwrap_or_else(|_| "en".into());
+    crate::l10n::apply(&lang);
+    let es = lang.eq_ignore_ascii_case("es") || lang.to_ascii_lowercase().starts_with("es-");
     toolbar::remember(None);
     let setup = crate::gpu::start()
         .and_then(|h| h.join().ok().flatten())
@@ -1463,7 +1466,8 @@ fn demo_clips() {
                 Step::Down,
                 Step::Up,
                 Step::Wait(0.2),
-                Step::Type("Fastest week yet", 0.03),
+                // The label is app-drawn text, so it follows the UI language.
+                Step::Type(if es { "Semana récord" } else { "Fastest week yet" }, 0.03),
                 Step::Wait(0.4),
                 // First Escape ends the text edit, the second deselects.
                 key(Key::Escape),

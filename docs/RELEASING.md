@@ -135,12 +135,13 @@ screen, your installed copy or its settings is touched) and writes:
 | `C:\dev\stinkshot-site\media-staging\video`, `img` | the site's clips and Settings crops. Not live: step 5 publishes them |
 | `C:\dev\stinkshot-site\media-staging\shots` | whole-window pictures (History, search, Settings pages, About, editor), dark and light, lossless WebP at 125 %, with `shots.json` |
 | `dist\store\listing\01-*.png` | Microsoft Store screenshots, 2560x1440 PNG, in the Store build's UI (no update check), upload in name order (`README.txt` lists them) |
+| `dist\store\listing-es\01-*.png` | the same set with the UI in Spanish (Latin America), for the Spanish Store listing (a second `-StoreOnly -Lang es` run) |
 
 Look at them before step 5: a UI change can move what a scripted click was aimed at. To
 render again without a release build:
 `scripts/site-media.ps1 -Version X.Y.Z -Ref <commit>` (add `-ShotsOnly` for only the
 window pictures and Store screenshots, or `-StoreOnly` for only the Store set; `update-site.ps1`
-refuses a partial set).
+refuses a partial set). `-StoreOnly -Lang es` renders the Spanish Store set into `listing-es`.
 
 `-AllowDirty` is for dry runs: the output folder gets a `-dirty` suffix and nothing in it is
 signed. The publish scripts refuse such a folder.

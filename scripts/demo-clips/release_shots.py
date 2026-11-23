@@ -9,7 +9,8 @@ has rendered `shots-*.png` twice: at 125 % for the site and at 150 % for the Sto
 - site: lossless WebP per window and theme plus shots.json (ids, sizes, bytes), the format of
   the site repo's img-unused/img-src/shots.json. Rounded corners and a hairline outline.
 - store: PNG, 2560x1440, the window centred on a plain backdrop (the Store wants 1366x768 or
-  more, 1920x1080 or larger preferred, at most 10).
+  more, 1920x1080 or larger preferred, at most 10). `--lang es` only labels README.txt; the
+  harness sets the UI language.
 """
 
 import argparse
@@ -50,6 +51,7 @@ STORE = [
     ("about", "dark"),
 ]
 STORE_SIZE = (2560, 1440)
+LANG_NAMES = {"en": "English (en)", "es": "Spanish, Latin America (es-419)"}
 BACKDROP = {
     "dark": ((16, 26, 20), (34, 58, 42)),
     "light": ((238, 245, 239), (205, 228, 209)),
@@ -115,6 +117,8 @@ def main() -> None:
     ap.add_argument("--commit", required=True)
     ap.add_argument("--site-scale", type=float, default=1.25)
     ap.add_argument("--store-scale", type=float, default=1.5)
+    # UI language the stills were rendered in (STINKSHOT_DEMO_LANG); noted in README.txt.
+    ap.add_argument("--lang", default="en")
     args = ap.parse_args()
     if args.site_stills and args.site_out:
         write_site(args)
@@ -172,6 +176,7 @@ def write_store(args) -> None:
         "Rendered from the app's own UI as the Store build shows it (no update check, no Update",
         "Now) by scripts/site-media.ps1 (demo harness, set 'shots'): demo content, default settings.",
         "Regenerated on every release; do not edit by hand.",
+        f"UI language: {LANG_NAMES.get(args.lang, args.lang)}.",
         f"Each is a PNG, {STORE_SIZE[0]}x{STORE_SIZE[1]}: the window at 150 % on a plain backdrop.",
         "Upload in this order; 01 is the lead picture.",
         "",
