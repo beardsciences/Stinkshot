@@ -271,6 +271,9 @@ pub fn get(key: &str) -> Option<&'static str> {
             "Las anotaciones se pueden editar después. Lo que queda bajo un desenfoque, un pixelado o un recuadro opaco nunca se guarda."
         }
         "settings.privacy.card" => "Tus capturas nunca salen de tu PC",
+        "settings.privacy.card.body_store" => {
+            "Sin subidas, cuentas ni telemetría. El reconocimiento de texto funciona sin conexión en Windows. Stinkshot no hace ninguna solicitud de red. Microsoft Store se encarga de las actualizaciones."
+        }
         "settings.privacy.card.body" => {
             "Sin subidas, cuentas ni telemetría. El reconocimiento de texto funciona sin conexión en Windows. La única solicitud de red es la búsqueda de actualizaciones de abajo, desactivada hasta que la actives."
         }
@@ -326,6 +329,9 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.about.report.desc" => "Abre la lista de problemas en el navegador.",
         "settings.about.report.open" => "Ver problemas",
         "settings.about.privacy" => "Privacidad",
+        "settings.about.privacy.desc_store" => {
+            "Sin subidas, cuentas ni telemetría. Stinkshot no hace ninguna solicitud de red. Microsoft Store se encarga de las actualizaciones."
+        }
         "settings.about.privacy.desc" => {
             "Sin subidas, cuentas ni telemetría. La única solicitud de red es la búsqueda opcional de actualizaciones."
         }

@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Microsoft Store package for Stinkshot. scripts/store-package.ps1 fills the double-brace
+  tokens below.
+  Identity Name, Publisher and PublisherDisplayName must match what Partner Center shows
+  under Product identity once the name is reserved.
+
+  Capabilities, and why (also in packaging/msix/README.md for the Store review notes):
+  - runFullTrust: Stinkshot is a classic Win32 desktop app.
+  - unvirtualizedResources (with the two desktop6 properties): settings live in
+    %APPDATA%\Stinkshot like the installer build, and Take Over PrintScreen changes the
+    user's Windows keyboard setting (HKCU\Control Panel\Keyboard). With write
+    virtualization on, both would silently land in a private copy.
+  - microphone, webcam: optional sources for screen recordings.
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
+  xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+  xmlns:desktop6="http://schemas.microsoft.com/appx/manifest/desktop/windows10/6"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap uap3 desktop desktop6 rescap">
+
+  <Identity
+    Name="{{IDENTITY_NAME}}"
+    Publisher="{{PUBLISHER}}"
+    Version="{{VERSION}}"
+    ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>{{DISPLAY_NAME}}</DisplayName>
+    <PublisherDisplayName>{{PUBLISHER_DISPLAY_NAME}}</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+    <desktop6:RegistryWriteVirtualization>disabled</desktop6:RegistryWriteVirtualization>
+    <desktop6:FileSystemWriteVirtualization>disabled</desktop6:FileSystemWriteVirtualization>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="en-us" />
+    <Resource Language="es" />
+  </Resources>
+
+  <Applications>
+    <Application Id="Stinkshot" Executable="stinkshot.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="{{DISPLAY_NAME}}"
+        Description="Private screenshots and screen recording for Windows"
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png">
+        <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png" />
+      </uap:VisualElements>
+      <Extensions>
+        <!-- `stinkshot` on the command line, as with the installer build. -->
+        <uap3:Extension Category="windows.appExecutionAlias" Executable="stinkshot.exe" EntryPoint="Windows.FullTrustApplication">
+          <uap3:AppExecutionAlias>
+            <desktop:ExecutionAlias Alias="stinkshot.exe" />
+          </uap3:AppExecutionAlias>
+        </uap3:Extension>
+        <!-- Start with Windows. Off until the user turns it on in Settings. -->
+        <desktop:Extension Category="windows.startupTask" Executable="stinkshot.exe" EntryPoint="Windows.FullTrustApplication">
+          <desktop:StartupTask TaskId="StinkshotStartup" Enabled="false" DisplayName="{{DISPLAY_NAME}}" />
+        </desktop:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+    <rescap:Capability Name="unvirtualizedResources" />
+    <DeviceCapability Name="microphone" />
+    <DeviceCapability Name="webcam" />
+  </Capabilities>
+</Package>

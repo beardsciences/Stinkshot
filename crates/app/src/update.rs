@@ -1,4 +1,6 @@
-//! The ONLY network code in Stinkshot. Runs only when `config.privacy.check_for_updates`
+//! The ONLY network code in Stinkshot. Never used in the Microsoft Store build, which the
+//! Store updates (`store_build`; Store policy 10.2.2 forbids downloading code to run).
+//! Runs only when `config.privacy.check_for_updates`
 //! is on, at most once per 24 h, on a worker thread. Never sends captures or anything about
 //! the user: every request is a plain HTTPS GET (User-Agent "Stinkshot/<version>", no
 //! cookies, no query strings).
@@ -471,6 +473,17 @@ fn parse_version(s: &str) -> (Vec<u64>, bool) {
         nums.pop();
     }
     (nums, pre)
+}
+
+/// True in the Microsoft Store build: updates come from the Store, so the update check, Update
+/// Now and `stinkshot update` are off and hidden, whatever the config says.
+pub fn store_build() -> bool {
+    stinkshot_platform::system::is_packaged()
+}
+
+/// Whether the update check may run: on in Settings, and not the Store build.
+pub fn checks_allowed(cfg: &stinkshot_core::config::Config) -> bool {
+    cfg.privacy.check_for_updates && !store_build()
 }
 
 #[cfg(test)]

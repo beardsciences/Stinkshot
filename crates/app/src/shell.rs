@@ -1725,6 +1725,13 @@ impl Shell {
                 let forwarded = std::mem::take(&mut self.forwarded_quit);
                 self.request_quit(!forwarded);
             }
+            Command::UpdateNow if crate::update::store_build() => {
+                self.notify(
+                    tr!("shell.update.store"),
+                    tr!("shell.update.store.body"),
+                    false,
+                );
+            }
             Command::UpdateNow => {
                 if self.update_release.is_some() {
                     self.install_update();
@@ -3077,6 +3084,9 @@ impl Shell {
     // -------------------------------------------------------------------- updates
 
     fn maybe_check_updates(&mut self, force: bool) {
+        if crate::update::store_build() {
+            return;
+        }
         if !self.shared.config.privacy.check_for_updates {
             if force {
                 self.notify(tr!("shell.update.off"), tr!("shell.update.off.body"), false);
@@ -3200,6 +3210,9 @@ impl Shell {
     /// `install_update`; `discard_ok`: the user already agreed to lose unsaved Editor
     /// Window edits (the installer closes this copy without asking).
     fn install_update_confirmed(&mut self, discard_ok: bool) {
+        if crate::update::store_build() {
+            return;
+        }
         let Some(r) = self.update_release.clone() else {
             return;
         };

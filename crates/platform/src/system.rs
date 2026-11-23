@@ -77,8 +77,79 @@ fn ipc_title() -> String {
 /// Tag in `COPYDATASTRUCT::dwData` so stray WM_COPYDATA is ignored.
 const IPC_MAGIC: usize = 0x5354_4B53;
 
-/// HKCU\Software\Microsoft\Windows\CurrentVersion\Run\StinkShot = "<exe>" --tray
+/// The package family name when running from an MSIX package (the Microsoft Store build),
+/// None for the installer and portable builds. Checked once.
+pub fn package_family() -> Option<&'static str> {
+    use windows::Win32::Storage::Packaging::Appx::GetCurrentPackageFamilyName;
+    static FAMILY: OnceLock<Option<String>> = OnceLock::new();
+    FAMILY
+        .get_or_init(|| {
+            let mut len = 0u32;
+            // SAFETY: a size query first (null buffer), then a buffer of that many wide chars.
+            unsafe {
+                let _ = GetCurrentPackageFamilyName(&mut len, None);
+                if len == 0 {
+                    return None;
+                }
+                let mut buf = vec![0u16; len as usize];
+                GetCurrentPackageFamilyName(&mut len, Some(windows::core::PWSTR(buf.as_mut_ptr())))
+                    .ok()
+                    .ok()?;
+                let end = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+                Some(String::from_utf16_lossy(&buf[..end]))
+            }
+        })
+        .as_deref()
+}
+
+/// True in the Microsoft Store build: Windows installs, updates and starts it as a package.
+pub fn is_packaged() -> bool {
+    package_family().is_some()
+}
+
+/// Store build only: true when Windows started this process through the startup task
+/// (start with Windows). A startup task cannot pass `--tray`, so the caller treats this the
+/// same way. Always false outside a package.
+pub fn launched_at_startup() -> bool {
+    if !is_packaged() {
+        return false;
+    }
+    use windows::ApplicationModel::Activation::ActivationKind;
+    windows::ApplicationModel::AppInstance::GetActivatedEventArgs()
+        .and_then(|a| a.Kind())
+        .is_ok_and(|k| k == ActivationKind::StartupTask)
+}
+
+/// The startup task declared in the package manifest (packaging/msix/AppxManifest.xml).
+const STARTUP_TASK_ID: &str = "StinkshotStartup";
+
+fn startup_task() -> anyhow::Result<windows::ApplicationModel::StartupTask> {
+    Ok(
+        windows::ApplicationModel::StartupTask::GetAsync(&windows::core::HSTRING::from(
+            STARTUP_TASK_ID,
+        ))?
+        .join()?,
+    )
+}
+
+/// Start with Windows. Installer and portable builds: HKCU Run value
+/// `StinkShot = "<exe>" --tray`. Store build: the package's startup task (a Run value from a
+/// package would outlive an uninstall and point at a folder users cannot run from).
 pub fn set_autostart(enabled: bool, exe: &Path) -> anyhow::Result<()> {
+    if is_packaged() {
+        let task = startup_task()?;
+        if enabled {
+            let state = task.RequestEnableAsync()?.join()?;
+            use windows::ApplicationModel::StartupTaskState as S;
+            anyhow::ensure!(
+                matches!(state, S::Enabled | S::EnabledByPolicy),
+                "Windows did not allow starting with Windows (turned off in Task Manager or by policy)"
+            );
+        } else {
+            task.Disable()?;
+        }
+        return Ok(());
+    }
     if enabled {
         let value = format!("\"{}\" --tray", exe.display());
         reg_set_string(RUN_KEY, &run_value(), &value)
@@ -88,6 +159,12 @@ pub fn set_autostart(enabled: bool, exe: &Path) -> anyhow::Result<()> {
 }
 
 pub fn autostart_enabled() -> bool {
+    if is_packaged() {
+        use windows::ApplicationModel::StartupTaskState as S;
+        return startup_task()
+            .and_then(|t| Ok(t.State()?))
+            .is_ok_and(|s| matches!(s, S::Enabled | S::EnabledByPolicy));
+    }
     reg_value_exists(RUN_KEY, &run_value())
 }
 

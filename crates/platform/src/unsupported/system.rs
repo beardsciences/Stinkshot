@@ -11,6 +11,21 @@ fn unsupported(what: &str) -> anyhow::Error {
 }
 
 /// Not supported on this OS yet; always an error.
+/// Never packaged on this OS.
+pub fn package_family() -> Option<&'static str> {
+    None
+}
+
+/// Never packaged on this OS.
+pub fn is_packaged() -> bool {
+    false
+}
+
+/// Never packaged on this OS.
+pub fn launched_at_startup() -> bool {
+    false
+}
+
 pub fn set_autostart(_enabled: bool, _exe: &Path) -> anyhow::Result<()> {
     Err(unsupported("autostart"))
 }

@@ -20,6 +20,8 @@ write entries for people who use Stinkshot, not for people who read the diff.
   longer shows up in Win+V.
 - Spanish (Latin American). Stinkshot follows the Windows language, or pick one in Settings >
   General.
+- A Microsoft Store version. It installs without a SmartScreen warning and updates through the
+  Store.
 
 ### Changed
 
@@ -38,6 +40,7 @@ write entries for people who use Stinkshot, not for people who read the diff.
 ### Security
 
 - The app file no longer contains folder paths from the PC it was built on.
+- Updated the URL parsing library for a crash fix (RUSTSEC-2026-0592).
 
 ## [0.1.5] - 2026-11-19
 

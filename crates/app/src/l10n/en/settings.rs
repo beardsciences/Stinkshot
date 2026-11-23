@@ -266,6 +266,9 @@ pub fn get(key: &str) -> Option<&'static str> {
             "Keep annotations editable later. Anything under a blur, pixelate or redact box is never stored."
         }
         "settings.privacy.card" => "Your Captures Never Leave Your PC",
+        "settings.privacy.card.body_store" => {
+            "No uploads, accounts or telemetry. Text recognition runs offline in Windows. Stinkshot makes no network requests. The Microsoft Store handles updates."
+        }
         "settings.privacy.card.body" => {
             "No uploads, accounts or telemetry. Text recognition runs offline in Windows. The only network request is the update check below, off until you turn it on."
         }
@@ -317,6 +320,9 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.about.report.desc" => "Opens the issue tracker in your browser.",
         "settings.about.report.open" => "Open Issues",
         "settings.about.privacy" => "Privacy",
+        "settings.about.privacy.desc_store" => {
+            "No uploads, accounts or telemetry. Stinkshot makes no network requests. The Microsoft Store handles updates."
+        }
         "settings.about.privacy.desc" => {
             "No uploads, accounts or telemetry. The only network request is the optional update check."
         }
@@ -601,6 +607,7 @@ pub const KEYS: &[&str] = &[
     "settings.history.originals",
     "settings.history.originals.desc",
     "settings.privacy.card",
+    "settings.privacy.card.body_store",
     "settings.privacy.card.body",
     "settings.privacy.updates",
     "settings.privacy.updates.desc",
@@ -638,6 +645,7 @@ pub const KEYS: &[&str] = &[
     "settings.about.report.desc",
     "settings.about.report.open",
     "settings.about.privacy",
+    "settings.about.privacy.desc_store",
     "settings.about.privacy.desc",
     "settings.about.offline",
     "settings.nav.help",

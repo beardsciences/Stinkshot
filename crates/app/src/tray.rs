@@ -70,7 +70,7 @@ const ID_QUIT: &str = "quit";
 const ID_UPDATE: &str = "update";
 
 fn header_text(config: &Config) -> String {
-    let state = if config.privacy.check_for_updates {
+    let state = if crate::update::checks_allowed(config) {
         tr!("shell.tray.update_check_on")
     } else {
         tr!("shell.tray.offline")

@@ -54,8 +54,8 @@ pub enum HeadlessJob {
 #[command(
     name = "stinkshot",
     version,
-    about = "Local-first screenshots and screen recording for Windows",
-    long_about = "Local-first screenshots and screen recording for Windows.\n\nWith no arguments Stinkshot starts in the tray. Subcommands act on the running instance and start it if needed. `full --out`, `window --out` and `ocr --file` run headless and exit."
+    about = "Private screenshots and screen recording for Windows",
+    long_about = "Private screenshots and screen recording for Windows.\n\nWith no arguments Stinkshot starts in the tray. Subcommands act on the running instance and start it if needed. `full --out`, `window --out` and `ocr --file` run headless and exit."
 )]
 struct Cli {
     /// Start in the tray only (used by start-with-Windows).
@@ -228,7 +228,11 @@ fn into_action(cli: Cli, raw_args: Vec<String>) -> CliAction {
 /// Parse the process arguments. Prints help/version/usage errors and exits as clap does.
 pub fn parse() -> CliAction {
     let raw: Vec<String> = std::env::args().skip(1).collect();
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
+    // The Store build's startup task cannot pass `--tray`: a startup launch is a tray launch.
+    if stinkshot_platform::system::launched_at_startup() {
+        cli.tray = true;
+    }
     into_action(cli, raw)
 }
 

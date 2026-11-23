@@ -180,6 +180,8 @@ pub fn get(key: &str) -> Option<&'static str> {
         "shell.saved.pinned" => "Pinned to Screen",
         "shell.saved.copied" => "Copied to Clipboard",
         "shell.saved.history" => "Saved to History",
+        "shell.update.store" => "Updates Come From the Microsoft Store",
+        "shell.update.store.body" => "Open the Microsoft Store to check for a newer version.",
         "shell.update.off" => "Update Checks Are Off",
         "shell.update.off.body" => {
             "Turn them on in Settings > Privacy. They are the only network request."
@@ -574,6 +576,8 @@ pub const KEYS: &[&str] = &[
     "shell.saved.pinned",
     "shell.saved.copied",
     "shell.saved.history",
+    "shell.update.store",
+    "shell.update.store.body",
     "shell.update.off",
     "shell.update.off.body",
     "shell.update.available.body",

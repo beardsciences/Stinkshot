@@ -2452,9 +2452,27 @@ impl SettingsWindow {
             accent,
             Icon::Shield,
             tr!("settings.privacy.card"),
-            tr!("settings.privacy.card.body"),
+            if crate::update::store_build() {
+                tr!("settings.privacy.card.body_store")
+            } else {
+                tr!("settings.privacy.card.body")
+            },
         );
         ui.add_space(2.0);
+        if !crate::update::store_build() {
+            self.update_rows(ui, shared);
+        }
+        toggle_row(
+            ui,
+            tr!("settings.privacy.clipboard_history"),
+            tr!("settings.privacy.clipboard_history.desc"),
+            &mut shared.config.privacy.clipboard_history,
+        );
+        self.privacy_footer(ui, shared);
+    }
+
+    /// Check for Updates, Manual Check and the available-update row. Not in the Store build.
+    fn update_rows(&mut self, ui: &mut Ui, shared: &mut Shared) {
         let enabled = shared.config.privacy.check_for_updates;
         toggle_row(
             ui,
@@ -2494,12 +2512,10 @@ impl SettingsWindow {
             ui.ctx().request_repaint_after(Duration::from_millis(500));
         }
         self.update_row(ui, shared);
-        toggle_row(
-            ui,
-            tr!("settings.privacy.clipboard_history"),
-            tr!("settings.privacy.clipboard_history.desc"),
-            &mut shared.config.privacy.clipboard_history,
-        );
+    }
+
+    fn privacy_footer(&mut self, ui: &mut Ui, shared: &mut Shared) {
+        let p = uc::pal(shared);
         // The history rows are History's own; search shows them there only.
         if search::searching() {
             return;
@@ -2672,7 +2688,11 @@ impl SettingsWindow {
         widgets::setting_row(
             ui,
             tr!("settings.about.privacy"),
-            tr!("settings.about.privacy.desc"),
+            if crate::update::store_build() {
+                tr!("settings.about.privacy.desc_store")
+            } else {
+                tr!("settings.about.privacy.desc")
+            },
             |ui| {
                 ui.label(
                     RichText::new(tr!("settings.about.offline"))

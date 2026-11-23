@@ -363,8 +363,11 @@ impl Default for HistoryCfg {
 /// mutex and IPC window, so a dev build can run beside the user's real instance without
 /// touching its config or history. Returns "" (normal) or "-<name>" (ASCII alnum, '-', '_').
 pub fn profile_suffix() -> String {
+    // A build can carry a default profile (`STINKSHOT_BUILD_PROFILE` at compile time): the
+    // local test Store package uses it to run beside an installed copy. Release builds set none.
     std::env::var("STINKSHOT_PROFILE")
         .ok()
+        .or_else(|| option_env!("STINKSHOT_BUILD_PROFILE").map(str::to_string))
         .map(|p| {
             p.chars()
                 .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')

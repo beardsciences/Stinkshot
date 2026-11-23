@@ -59,4 +59,7 @@ windows = { workspace = true, features = [
     "Win32_Storage_FileSystem",
     "Win32_System_RemoteDesktop",
     "Win32_System_Shutdown",
+    "Win32_Storage_Packaging_Appx",
+    "ApplicationModel",
+    "ApplicationModel_Activation",
 ] }

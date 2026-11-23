@@ -193,6 +193,8 @@ pub fn get(key: &str) -> Option<&'static str> {
         "shell.saved.pinned" => "Fijada en pantalla",
         "shell.saved.copied" => "Copiada al portapapeles",
         "shell.saved.history" => "Guardada en el historial",
+        "shell.update.store" => "Las actualizaciones llegan desde Microsoft Store",
+        "shell.update.store.body" => "Abre Microsoft Store para buscar una versión más reciente.",
         "shell.update.off" => "La búsqueda de actualizaciones está desactivada",
         "shell.update.off.body" => {
             "Actívala en Configuración > Privacidad. Es la única solicitud de red."
