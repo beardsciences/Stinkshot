@@ -144,3 +144,5 @@ Win+V and Cloud Clipboard markers, Windows 11 rounded-corner window capture.
 
 Release needs per system: macOS builds need an Apple Developer account for signing and
 notarization. Linux would ship as an AppImage or Flatpak (Flatpak fits the portal model).
+winit loads `libxkbcommon-x11.so` at run time on X11 and panics without it, so a Linux
+package must depend on `libxkbcommon-x11-0` (found by the CI smoke test).

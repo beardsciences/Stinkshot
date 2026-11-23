@@ -81,7 +81,7 @@ jobs:
           # Last line: the smoke test's X server, software Vulkan (lavapipe) and a font.
           sudo apt-get install -y --no-install-recommends libgtk-3-dev libxdo-dev \
             libayatana-appindicator3-dev libxkbcommon-dev libwayland-dev \
-            xvfb xauth libvulkan1 mesa-vulkan-drivers fonts-dejavu-core
+            xvfb xauth libvulkan1 mesa-vulkan-drivers fonts-dejavu-core libxkbcommon-x11-0
 
       - name: Test the portable crates and the platform contract
         run: cargo test --locked -p stinkshot-core -p stinkshot-stitch -p stinkshot-history -p stinkshot-logo -p stinkshot-platform -p stinkshot-record

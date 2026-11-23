@@ -34,6 +34,16 @@ Add-AppxPackage -Register dist\store\<version>-test\layout\AppxManifest.xml
 Registering an unsigned layout needs Developer Mode (Settings > System > For developers).
 Remove it with `Get-AppxPackage Stinkshot.LocalTest | Remove-AppxPackage`.
 
+## Product identity
+
+Reserved Nov 23 2026. Store ID 9MX55GVGVBKL.
+
+```
+powershell -ExecutionPolicy Bypass -File scripts\store-package.ps1 -IdentityName ChristianMcCullough.Stinkshot -Publisher "CN=072663B3-B5AE-41B8-9003-1FEEC40A88D6" -PublisherDisplayName "Christian McCullough"
+```
+
+Package family name: `ChristianMcCullough.Stinkshot_eejxjq58zvpf0`.
+
 ## Partner Center, once
 
 1. Create the developer account at storedeveloper.microsoft.com (individual, free; ID and selfie
