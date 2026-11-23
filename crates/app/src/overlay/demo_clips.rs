@@ -1467,7 +1467,14 @@ fn demo_clips() {
                 Step::Up,
                 Step::Wait(0.2),
                 // The label is app-drawn text, so it follows the UI language.
-                Step::Type(if es { "Semana récord" } else { "Fastest week yet" }, 0.03),
+                Step::Type(
+                    if es {
+                        "Semana récord"
+                    } else {
+                        "Fastest week yet"
+                    },
+                    0.03,
+                ),
                 Step::Wait(0.4),
                 // First Escape ends the text edit, the second deselects.
                 key(Key::Escape),
