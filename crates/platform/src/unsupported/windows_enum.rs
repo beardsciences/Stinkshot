@@ -5,6 +5,9 @@ use crate::Hwnd;
 use crate::occlusion::Layer;
 pub use crate::portable::windows_enum::*;
 
+/// Not implemented on this OS yet.
+pub const SUPPORTED: bool = false;
+
 /// Always empty on this OS yet.
 pub fn layers() -> Vec<Layer> {
     Vec::new()

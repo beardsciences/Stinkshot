@@ -21,7 +21,7 @@ pub fn system_dpi() -> u32 {
 
 /// No trash support yet: an error, so the file is kept.
 pub fn recycle(_path: &std::path::Path) -> anyhow::Result<()> {
-    anyhow::bail!("moving files to the trash is not supported on this OS yet")
+    Err(stinkshot_platform::unsupported("moving files to the trash"))
 }
 
 /// Not found: windows are not looked up by title yet.

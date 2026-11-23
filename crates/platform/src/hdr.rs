@@ -24,6 +24,9 @@ use windows::Win32::Foundation::ERROR_SUCCESS;
 
 pub use crate::portable::hdr::*;
 
+/// Implemented on this OS (the stand-ins say false).
+pub const SUPPORTED: bool = true;
+
 /// Color state of every active display (DisplayConfig API). Empty when the query fails.
 pub fn displays() -> Vec<DisplayColor> {
     // SAFETY: buffers are sized by GetDisplayConfigBufferSizes and every info packet carries

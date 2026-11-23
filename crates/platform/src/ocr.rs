@@ -10,6 +10,9 @@ use windows::Storage::Streams::DataWriter;
 
 pub use crate::portable::ocr::*;
 
+/// Implemented on this OS (the stand-ins say false).
+pub const SUPPORTED: bool = true;
+
 pub struct WindowsOcr {
     engine: WinOcrEngine,
     /// One OcrEngine instance rejects overlapping RecognizeAsync calls, so serialize them.

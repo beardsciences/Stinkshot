@@ -3,6 +3,9 @@
 
 pub use crate::portable::hdr::*;
 
+/// Not implemented on this OS yet.
+pub const SUPPORTED: bool = false;
+
 /// Always empty on this OS yet.
 pub fn displays() -> Vec<DisplayColor> {
     Vec::new()

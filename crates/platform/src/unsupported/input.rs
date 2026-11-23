@@ -8,6 +8,9 @@ use stinkshot_core::PxPoint;
 use crate::portable::input::fixed_key_label;
 pub use crate::portable::input::{InputEvent, MouseButton};
 
+/// Not implemented on this OS yet.
+pub const SUPPORTED: bool = false;
+
 /// (0, 0) on this OS yet.
 pub fn cursor_pos() -> PxPoint {
     PxPoint::default()
@@ -39,8 +42,6 @@ pub struct InputHook {
 impl InputHook {
     /// Not supported on this OS yet; always an error.
     pub fn install(_tx: Sender<(Instant, InputEvent)>) -> anyhow::Result<InputHook> {
-        Err(anyhow::anyhow!(
-            "the global input hook is not supported on this OS yet"
-        ))
+        Err(crate::unsupported("the global input hook"))
     }
 }

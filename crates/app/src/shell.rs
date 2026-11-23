@@ -70,6 +70,7 @@ use crate::workers::{
 };
 use crate::{logger, sysutil, timing, wake};
 
+pub(crate) mod smoke;
 #[cfg(feature = "soak")]
 pub(crate) mod soak;
 
@@ -150,7 +151,9 @@ fn on_end_session(phase: system::EndSessionPhase) -> bool {
         }
         Phase::End => {
             log::info!("Windows is ending the session");
-            if let Err(e) = system::take_over_printscreen(false) {
+            if system::PRINTSCREEN_SUPPORTED
+                && let Err(e) = system::take_over_printscreen(false)
+            {
                 log::warn!("could not restore PrintScreen setting: {e:#}");
             }
             // No query came first (forced shutdown): ask the UI thread now.
@@ -362,7 +365,8 @@ fn start_capture_rewarm() {
             let (tx, rx) = channel::<system::SessionEvent>();
             system::set_end_session_handler(tr!("shell.end_session.reason"), on_end_session);
             if let Err(e) = system::start_session_watcher(tx) {
-                log::warn!("capture re-warm-up unavailable: {e:#}");
+                let level = errors::log_level(&e, log::Level::Warn);
+                log::log!(level, "capture re-warm-up unavailable: {e:#}");
                 return;
             }
             while let Ok(first) = rx.recv() {
@@ -412,7 +416,10 @@ fn start_ipc() -> Receiver<Vec<String>> {
                 log::error!("IPC bridge failed to start: {e}");
             }
         }
-        Err(e) => log::error!("IPC listener failed: {e:#}"),
+        Err(e) => {
+            let level = errors::log_level(&e, log::Level::Error);
+            log::log!(level, "IPC listener failed: {e:#}");
+        }
     }
     timing::point(format_args!("ipc listener ready"));
     ipc_rx
@@ -597,7 +604,8 @@ fn run_app(
     let tray = match Tray::new(&config) {
         Ok(t) => Some(t),
         Err(e) => {
-            log::error!("tray icon failed: {e:#}");
+            let level = errors::log_level(&e, log::Level::Error);
+            log::log!(level, "tray icon failed: {e:#}");
             None
         }
     };
@@ -649,7 +657,8 @@ fn run_app(
         ocr_init.and_then(|h| h.join().ok()).and_then(|r| match r {
             Ok(o) => Some(o),
             Err(e) => {
-                log::warn!("OCR unavailable: {e:#}");
+                let level = errors::log_level(&e, log::Level::Warn);
+                log::log!(level, "OCR unavailable: {e:#}");
                 None
             }
         });
@@ -705,7 +714,9 @@ fn run_app(
             // the shell: the tray icon is gone and `Drop for Hotkeys` handed PrintScreen
             // back. Start over rather than vanish, with the same cap on quick restarts.
             log::error!("the UI thread panicked; restarting");
-            if let Err(e) = system::take_over_printscreen(false) {
+            if system::PRINTSCREEN_SUPPORTED
+                && let Err(e) = system::take_over_printscreen(false)
+            {
                 log::warn!("could not restore PrintScreen setting: {e:#}");
             }
             wait_for_jobs(GPU_RESTART_GRACE);
@@ -1584,6 +1595,10 @@ impl Shell {
     }
 
     fn apply_autostart(&self) {
+        // The setting is hidden where autostart is not supported yet: nothing to apply.
+        if !system::AUTOSTART_SUPPORTED {
+            return;
+        }
         let enabled = self.shared.config.general.start_with_windows;
         let exe = match std::env::current_exe() {
             Ok(e) => e,
@@ -1636,7 +1651,8 @@ impl Shell {
             }
             Command::OcrRegion => {
                 if self.shared.ocr.is_none() {
-                    self.notify(tr!("shell.ocr.none"), tr!("shell.ocr.none.body"), true);
+                    let (title, body) = errors::ocr_missing();
+                    self.notify(title, body, true);
                 } else {
                     self.begin_overlay(OverlayMode::SelectRegion(RegionPurpose::Ocr));
                 }
@@ -2747,6 +2763,10 @@ impl Shell {
                         tr!("shell.selected_text.none.body"),
                         false,
                     ),
+                    Err(e) if stinkshot_platform::is_unsupported_text(&e) => {
+                        let body = report_str("selected text", &e, "");
+                        self.notify(tr!("shell.unsupported"), body, true);
+                    }
                     Err(e) => {
                         log::warn!("selected text: {e}");
                         self.notify(

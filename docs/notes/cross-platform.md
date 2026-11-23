@@ -33,11 +33,35 @@ pub mod capture;
 ```
 
 Stand-ins return an error ("not supported on this OS yet") or a harmless default, never
-panic. Types and pure logic used by both live in portable modules, so they are defined once.
+panic. The error is `stinkshot_platform::Unsupported` (`unsupported("what")`), recognized by
+`is_unsupported` and, after crossing a thread as text, `is_unsupported_text`. Types and pure
+logic used by both live in portable modules, so they are defined once.
 
-To add a real implementation for a module on macOS: write `macos/<module>.rs`, then change
-that module's attribute to pick it with `cfg_attr(target_os = "macos", path = ...)`. The rest of
-the app does not change.
+Each module says what it implements: `pub const SUPPORTED: bool` (true in the Windows file,
+false in the stand-in). `system` has one per feature (`AUTOSTART_SUPPORTED`,
+`PRINTSCREEN_SUPPORTED`, `SINGLE_INSTANCE_SUPPORTED`, `SESSION_EVENTS_SUPPORTED`,
+`OPEN_SUPPORTED`), `clipboard` adds `HISTORY_MARKERS_SUPPORTED`, and `record` sums its modules
+up as `RECORDING_SUPPORTED`, `VIDEO_FILES_SUPPORTED`, `MICROPHONES_SUPPORTED` and
+`WEBCAMS_SUPPORTED`.
+
+To add a real implementation for a module on macOS: write `macos/<module>.rs` with
+`SUPPORTED = true`, then change that module's attribute to pick it with
+`cfg_attr(target_os = "macos", path = ...)`. The rest of the app does not change.
+
+## Contract tests
+
+`crates/platform/tests/contract.rs` and `crates/record/tests/contract.rs` hold the boundary
+contract and run against whatever implementation the OS compiles:
+
+- `shape`: every per-OS public function and method pinned as a fn pointer, so a signature
+  change fails to compile on that OS.
+- `everywhere`: safe with any implementation: bad input (empty rect, null window, missing
+  file, 0x0 recording region) gives an error or nothing and writes no file; monitor lists are
+  consistent with the virtual bounds; fixed key labels match. On Windows nothing captures,
+  touches the clipboard, installs hooks, writes the registry or opens windows.
+- `stand_ins`: for every `SUPPORTED` that is false, each call gives an `Unsupported` error or
+  the documented default. A real implementation flips its constant and these checks step
+  aside for it.
 
 ## Checking it from Windows
 
@@ -58,6 +82,25 @@ macOS SDK, and none of them affect real builds:
 CI (`portable` job in `.github/workflows/ci.yml`) builds and tests on real Linux and macOS
 runners.
 
+## Smoke test
+
+```
+stinkshot --smoke-test
+```
+
+Hidden from `--help` (`crates/app/src/shell/smoke.rs`). Starts the app as far as is safe
+without a desktop session: a fresh temporary profile (`APPDATA` and `USERPROFILE` pointed
+at a temp folder, `STINKSHOT_PROFILE=smoke`), config, language, fonts, history, the wgpu
+device from `gpu.rs`, eframe with the hidden root viewport, and the Settings window as an
+immediate viewport. It passes after 5 frames painted in Settings' own native window and
+exits 0. A failure, panic or more than 20 s exits 1 with the reason on stderr. It skips the
+single-instance lock, IPC, tray, hotkeys, PrintScreen takeover, autostart, capture warm-up
+and background workers, so it never touches an installed instance and is safe to run
+locally from a debug build.
+
+CI runs it on Linux under `xvfb-run` with lavapipe (`WGPU_BACKEND=vulkan`). The macOS step
+is `continue-on-error` until it has passed once.
+
 ## What the stand-ins do at run time
 
 Off Windows the app would start but cannot capture yet. Every capture and clipboard write
@@ -67,6 +110,23 @@ Start-with-Windows, PrintScreen takeover, the IPC listener and the session watch
 errors. In the app, `sysutil` has a stand-in (`src/unsupported/sysutil.rs`): message boxes
 print to stderr, questions answer No, and files are never trashed. The Save As dialog
 returns an error. Window icons, cloaking and captions do nothing.
+
+How the app handles that:
+
+- An attempt that fails with `Unsupported` shows its usual failure toast once, with the body
+  "This is not supported on this system yet" (`errors::Cause::Unsupported`,
+  `shell.error.unsupported`) and no log hint. No text recognition says Text Recognition Not
+  Available instead of the Windows language hint.
+- Settings hides what has no implementation: Start With Windows, the Windows Integration
+  group (Replace Snipping Tool, Take Over PrintScreen, the Win+Shift+S and Win+Shift+R rows)
+  and Add Copies to Clipboard History. Hotkeys treats Replace Snipping Tool and the
+  PrintScreen takeover as off there, whatever the config says, so no hotkey error appears at
+  start.
+- Start-up steps that are expected to fail there (IPC listener, session watcher, OCR, tray
+  icon, element snapping) log at info, not warn or error.
+- Linux has no tray icon yet: tray-icon builds GTK menus, which needs GTK initialized and a
+  GTK main loop. `Tray::new` returns `Unsupported` there instead of panicking, and the app
+  shows its Tray Icon Unavailable toast.
 
 ## What each system needs next
 

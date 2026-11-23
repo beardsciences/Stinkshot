@@ -10,6 +10,9 @@ use anyhow::Result;
 
 use crate::overlay::WebcamFrame;
 
+/// Not implemented on this OS yet.
+pub const SUPPORTED: bool = false;
+
 /// Always empty on this OS yet.
 pub fn list_names() -> Vec<String> {
     Vec::new()
@@ -26,8 +29,6 @@ impl Webcam {
         _device: Option<&str>,
         _latest: Arc<Mutex<Option<WebcamFrame>>>,
     ) -> Result<Webcam> {
-        Err(anyhow::anyhow!(
-            "webcam capture is not supported on this OS yet"
-        ))
+        Err(stinkshot_platform::unsupported("webcam capture"))
     }
 }

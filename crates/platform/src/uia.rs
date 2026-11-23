@@ -24,6 +24,9 @@ use windows::Win32::UI::Accessibility::{
 use crate::Hwnd;
 pub use crate::portable::uia::*;
 
+/// Implemented on this OS (the stand-ins say false).
+pub const SUPPORTED: bool = true;
+
 /// Deepest element chain followed from the window root.
 const MAX_DEPTH: usize = 32;
 /// Cap on children inspected per node (pathological lists/grids).

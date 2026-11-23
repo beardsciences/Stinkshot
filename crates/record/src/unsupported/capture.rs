@@ -9,6 +9,9 @@ use stinkshot_core::PxRect;
 
 pub use crate::portable::capture::*;
 
+/// Not implemented on this OS yet.
+pub const SUPPORTED: bool = false;
+
 /// Always empty on this OS yet.
 pub fn enumerate_monitors() -> Vec<MonitorRect> {
     Vec::new()
@@ -42,8 +45,8 @@ impl Mapped<'_> {
 impl Capturer {
     /// Not supported on this OS yet; always an error.
     pub fn new(_region: PxRect, _include_cursor: bool, _fps: u32) -> Result<Capturer> {
-        Err(anyhow::anyhow!(
-            "screen capture for recording is not supported on this OS yet"
+        Err(stinkshot_platform::unsupported(
+            "screen capture for recording",
         ))
     }
 

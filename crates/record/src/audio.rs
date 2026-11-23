@@ -17,6 +17,9 @@ use crate::dsp::{OUT_RATE, Resampler, SampleFormat, SourceQueue, decode_to_stere
 use crate::mf::ComGuard;
 pub use crate::portable::audio::*;
 
+/// Implemented on this OS (the stand-ins say false).
+pub const SUPPORTED: bool = true;
+
 struct Format {
     rate: u32,
     channels: usize,

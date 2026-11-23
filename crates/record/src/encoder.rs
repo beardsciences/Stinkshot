@@ -9,6 +9,9 @@ use windows::core::{GUID, HSTRING, Interface};
 use crate::mf::{make_sample, pack};
 pub use crate::portable::encoder::*;
 
+/// Implemented on this OS (the stand-ins say false).
+pub const SUPPORTED: bool = true;
+
 pub struct Encoder {
     writer: IMFSinkWriter,
     video_stream: u32,

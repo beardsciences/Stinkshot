@@ -34,6 +34,18 @@ use crate::util::{
 pub use crate::portable::system::{EndSessionPhase, SessionEvent};
 use crate::portable::system::{decode_args, encode_args};
 
+// What works on this OS (the stand-ins say false).
+/// `set_autostart` and `autostart_enabled` (Start With Windows).
+pub const AUTOSTART_SUPPORTED: bool = true;
+/// `take_over_printscreen`.
+pub const PRINTSCREEN_SUPPORTED: bool = true;
+/// `acquire_single_instance`, `send_to_running_instance` and `start_ipc_listener`.
+pub const SINGLE_INSTANCE_SUPPORTED: bool = true;
+/// `start_session_watcher` and `set_end_session_handler`.
+pub const SESSION_EVENTS_SUPPORTED: bool = true;
+/// `reveal_in_explorer` and `open_path`.
+pub const OPEN_SUPPORTED: bool = true;
+
 const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 fn run_value() -> String {
     format!("StinkShot{}", stinkshot_core::config::profile_suffix())

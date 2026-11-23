@@ -47,6 +47,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 pub use crate::portable::snip::*;
 
+/// Implemented on this OS (the stand-ins say false).
+pub const SUPPORTED: bool = true;
+
 /// Re-install interval: undoes a silent removal after a callback timeout.
 const REFRESH_MS: u32 = 30_000;
 /// Thread message carrying a chord (`wParam` = `SnipChord::index`).

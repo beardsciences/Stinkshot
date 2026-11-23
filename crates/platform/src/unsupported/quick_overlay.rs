@@ -6,6 +6,9 @@ use stinkshot_core::{PxRect, Rgba};
 use crate::Hwnd;
 pub use crate::portable::quick_overlay::QuickInput;
 
+/// Not implemented on this OS yet.
+pub const SUPPORTED: bool = false;
+
 /// Quick overlay window stand-in. It cannot be shown on this OS yet, so no value exists.
 pub struct QuickOverlay {
     _never: std::convert::Infallible,
@@ -27,7 +30,5 @@ pub fn show(
     _windows: Vec<PxRect>,
     _accent: [u8; 3],
 ) -> anyhow::Result<QuickOverlay> {
-    Err(anyhow::anyhow!(
-        "the quick overlay is not supported on this OS yet"
-    ))
+    Err(crate::unsupported("the quick overlay"))
 }

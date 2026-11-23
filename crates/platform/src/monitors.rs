@@ -11,6 +11,9 @@ use windows::core::BOOL;
 
 pub use crate::portable::monitors::*;
 
+/// Implemented on this OS (the stand-ins say false).
+pub const SUPPORTED: bool = true;
+
 pub(crate) fn rect_from_win(r: &RECT) -> PxRect {
     PxRect::new(
         r.left,

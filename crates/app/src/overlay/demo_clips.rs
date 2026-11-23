@@ -585,6 +585,19 @@ fn key(k: Key) -> Step {
 fn demo_clips() {
     let dir = PathBuf::from(std::env::var("STINKSHOT_DEMO_DIR").expect("STINKSHOT_DEMO_DIR"));
     let only = std::env::var("STINKSHOT_DEMO_ONLY").unwrap_or_default();
+    // STINKSHOT_DEMO_HOME: the user folder the pages show (Settings prints the config and
+    // History paths), so published pictures carry a neutral path, not this PC's user name.
+    // Only read here; nothing in the harness writes there.
+    if let Ok(home) = std::env::var("STINKSHOT_DEMO_HOME") {
+        let home = PathBuf::from(home);
+        // SAFETY: set before any other thread starts (the GPU thread is spawned below).
+        unsafe {
+            std::env::set_var("USERPROFILE", &home);
+            std::env::set_var("APPDATA", home.join("AppData").join("Roaming"));
+            std::env::set_var("LOCALAPPDATA", home.join("AppData").join("Local"));
+            std::env::remove_var("STINKSHOT_PROFILE");
+        }
+    }
     // STINKSHOT_DEMO_LANG=es checks a translation for clipping (site media stays English).
     crate::l10n::apply(&std::env::var("STINKSHOT_DEMO_LANG").unwrap_or_else(|_| "en".into()));
     toolbar::remember(None);
@@ -616,7 +629,7 @@ fn demo_clips() {
     let empty_history = dir.join("empty-history");
     std::fs::create_dir_all(&empty_history).unwrap();
     // Clips not in the default set (verification shots) only run when named.
-    let extra = ["history-probe", "stills", "probe", "site"];
+    let extra = ["history-probe", "stills", "probe", "site", "shots"];
     let want = |name: &str| {
         if only.is_empty() {
             !extra.contains(&name)
@@ -1340,5 +1353,138 @@ fn demo_clips() {
                 );
             }
         }
+    }
+
+    if want("shots") {
+        // Release screenshots of whole app windows (scripts/site-media.ps1 frames them for the
+        // site and the Store): History, a History search, four Settings pages and the editor,
+        // in both themes, default settings. Sizes are points; STINKSHOT_DEMO_SCALE sets the
+        // pixel density (1.0 is 150 %). STINKSHOT_DEMO_STORE=1 renders the Store build's pages
+        // (no update check or Update Now), for the Store screenshots.
+        let store = std::env::var("STINKSHOT_DEMO_STORE").as_deref() == Ok("1");
+        crate::update::TEST_STORE_BUILD.with(|c| c.set(Some(store)));
+        let px = |v: f32| (v * ppp()).round() as u32;
+        let shot = |name: String,
+                    size_pt: (f32, f32),
+                    steps: Vec<Step>,
+                    shared: &mut Shared,
+                    surface: &mut dyn crate::state::Surface| {
+            let name: &'static str = Box::leak(name.into_boxed_str());
+            let mut steps = steps;
+            steps.push(Step::Snap(name));
+            let mut r = Rig::new(&setup.device, &setup.queue, px(size_pt.0), px(size_pt.1));
+            run_clip(
+                &mut r,
+                shared,
+                &dir.join(format!("{name}.mkv")),
+                (-200.0, -200.0),
+                &steps,
+                |ctx, sh| {
+                    let _ = surface.show(ctx, sh);
+                },
+            );
+        };
+        for (theme, dark) in [("dark", true), ("light", false)] {
+            let mut shared = shared_for(&dir.join("history"), fonts.clone());
+            shared.dark = dark;
+            shared.config = Config::default();
+            shared.ocr = stinkshot_platform::ocr::WindowsOcr::new()
+                .ok()
+                .map(|o| Arc::new(o) as _);
+            let mut hw = crate::history_ui::HistoryWindow::new(&shared);
+            shot(
+                format!("shots-history-{theme}"),
+                (1280.0, 800.0),
+                vec![Step::Wait(2.0)],
+                &mut shared,
+                &mut hw,
+            );
+            let mut hw = crate::history_ui::HistoryWindow::new(&shared);
+            shot(
+                format!("shots-history-search-{theme}"),
+                (1280.0, 800.0),
+                vec![
+                    Step::Wait(1.5),
+                    Step::Key(Key::F, Modifiers::COMMAND),
+                    Step::Wait(0.3),
+                    Step::Type("shader", 0.05),
+                    Step::Wait(2.0),
+                ],
+                &mut shared,
+                &mut hw,
+            );
+
+            let mut shared = shared_for(&empty_history, fonts.clone());
+            shared.dark = dark;
+            shared.config = Config::default();
+            let mut sw = crate::settings_ui::SettingsWindow::new(&shared);
+            use crate::settings_ui::Section as S;
+            for (page, section) in [
+                ("general", S::General),
+                ("privacy", S::Privacy),
+                ("recording", S::Recording),
+                ("about", S::About),
+            ] {
+                sw.show_section(section);
+                shot(
+                    format!("shots-settings-{page}-{theme}"),
+                    (1040.0, 800.0),
+                    vec![Step::Wait(1.5)],
+                    &mut shared,
+                    &mut sw,
+                );
+            }
+
+            // The editor over the demo desktop: an arrow, numbered steps and a text label.
+            let mut shared = shared_for(&empty_history, fonts.clone());
+            shared.dark = dark;
+            let mut o = overlay(&desktop, &windows, (882, 288), &shared);
+            let steps = [
+                Step::Wait(0.2),
+                Step::Drag(1818.0, 842.0, 0.2),
+                Step::Wait(0.3),
+                key(Key::A),
+                Step::Move(1610.0, 500.0, 0.2),
+                Step::Drag(1736.0, 628.0, 0.3),
+                Step::Wait(0.2),
+                key(Key::N),
+                Step::Move(1085.0, 375.0, 0.2),
+                Step::Down,
+                Step::Up,
+                Step::Move(1315.0, 375.0, 0.2),
+                Step::Down,
+                Step::Up,
+                Step::Move(1545.0, 375.0, 0.2),
+                Step::Down,
+                Step::Up,
+                Step::Wait(0.2),
+                key(Key::T),
+                Step::Move(1300.0, 478.0, 0.2),
+                Step::Down,
+                Step::Up,
+                Step::Wait(0.2),
+                Step::Type("Fastest week yet", 0.03),
+                Step::Wait(0.4),
+                // First Escape ends the text edit, the second deselects.
+                key(Key::Escape),
+                Step::Wait(0.2),
+                key(Key::Escape),
+                Step::Move(1300.0, 1150.0, 0.3),
+                Step::Wait(1.0),
+                Step::Snap(Box::leak(format!("shots-editor-{theme}").into_boxed_str())),
+            ];
+            run_clip(
+                &mut rig,
+                &mut shared,
+                &dir.join("shots-editor.mkv"),
+                (882.0, 288.0),
+                &steps,
+                |ctx, sh| {
+                    o.ensure_base_texture(ctx);
+                    o.frame(ctx, sh);
+                },
+            );
+        }
+        crate::update::TEST_STORE_BUILD.with(|c| c.set(None));
     }
 }

@@ -4,12 +4,13 @@
 use crate::Hwnd;
 pub use crate::portable::text_selection::*;
 
+/// Not implemented on this OS yet.
+pub const SUPPORTED: bool = false;
+
 /// Not supported on this OS yet; always an error.
 pub fn selected_text(
     _fallback: Option<Hwnd>,
     _paragraph: bool,
 ) -> anyhow::Result<Option<TextSelection>> {
-    Err(anyhow::anyhow!(
-        "reading the text selection is not supported on this OS yet"
-    ))
+    Err(crate::unsupported("reading the text selection"))
 }

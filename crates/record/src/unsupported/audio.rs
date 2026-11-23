@@ -13,6 +13,9 @@ use anyhow::Result;
 use crate::dsp::SourceQueue;
 pub use crate::portable::audio::*;
 
+/// Not implemented on this OS yet.
+pub const SUPPORTED: bool = false;
+
 /// Always empty on this OS yet.
 pub fn list_capture_devices() -> Vec<String> {
     Vec::new()
@@ -25,7 +28,5 @@ pub fn spawn(
     _stop: Arc<AtomicBool>,
     _fatal: Arc<Mutex<Option<String>>>,
 ) -> Result<JoinHandle<()>> {
-    Err(anyhow::anyhow!(
-        "audio capture is not supported on this OS yet"
-    ))
+    Err(stinkshot_platform::unsupported("audio capture"))
 }

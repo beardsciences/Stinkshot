@@ -154,9 +154,14 @@ fn open(shared: &mut Shared, path: &Path, reveal: bool) {
     };
     if let Err(e) = r {
         log::warn!("help: open {}: {e:#}", path.display());
+        let body = if stinkshot_platform::is_unsupported(&e) {
+            crate::l10n::tr!("shell.error.unsupported")
+        } else {
+            lookup(text::OPEN_FAILED_HINT)
+        };
         shared.outbox.push(Command::Notify {
             title: lookup(text::OPEN_FAILED).into(),
-            body: lookup(text::OPEN_FAILED_HINT).into(),
+            body: body.into(),
             error: true,
         });
     }

@@ -16,6 +16,11 @@ use windows::core::w;
 
 use crate::util::{wide, wide_os};
 
+/// Implemented on this OS (the stand-ins say false).
+pub const SUPPORTED: bool = true;
+/// `set_allow_history` controls Clipboard History and Cloud Clipboard.
+pub const HISTORY_MARKERS_SUPPORTED: bool = true;
+
 struct ClipboardGuard;
 
 /// Tries at opening the clipboard. The waits between them (`open_retry_delay`) add up to

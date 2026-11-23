@@ -48,7 +48,8 @@ jobs:
 
   # Keeps the code building on the next platforms (docs/notes/cross-platform.md). The
   # portable crates are tested for real. The platform-specific ones only have stand-ins
-  # off Windows so far, so the workspace is type-checked there, not run.
+  # off Windows so far, so the workspace is type-checked there, and the app only has to
+  # start (smoke test), not capture.
   portable:
     if: github.server_url == 'https://github.com' && github.repository == 'beardsciences/stinkshot'
     strategy:
@@ -77,11 +78,37 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
+          # Last line: the smoke test's X server, software Vulkan (lavapipe) and a font.
           sudo apt-get install -y --no-install-recommends libgtk-3-dev libxdo-dev \
-            libayatana-appindicator3-dev libxkbcommon-dev libwayland-dev
+            libayatana-appindicator3-dev libxkbcommon-dev libwayland-dev \
+            xvfb xauth libvulkan1 mesa-vulkan-drivers fonts-dejavu-core
 
-      - name: Test the portable crates
-        run: cargo test --locked -p stinkshot-core -p stinkshot-stitch -p stinkshot-history -p stinkshot-logo
+      - name: Test the portable crates and the platform contract
+        run: cargo test --locked -p stinkshot-core -p stinkshot-stitch -p stinkshot-history -p stinkshot-logo -p stinkshot-platform -p stinkshot-record
 
       - name: Check the workspace
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
+
+      # Starts the app (temporary profile, wgpu, Settings window), paints a few frames and
+      # exits 0; non-zero with a message on failure or after 20 s (crates/app/src/shell/smoke.rs).
+      - name: Build the app
+        run: cargo build --locked -p stinkshot
+
+      - name: Smoke test (Linux, Xvfb)
+        if: runner.os == 'Linux'
+        timeout-minutes: 5
+        env:
+          # lavapipe: the runner has no GPU.
+          WGPU_BACKEND: vulkan
+          RUST_BACKTRACE: '1'
+        run: xvfb-run -a -s '-screen 0 1920x1080x24' target/debug/stinkshot --smoke-test
+
+      # macOS runners have a logged-in window server and a paravirtual Metal device, so this
+      # should work, but it has not run yet: not required until it has passed once.
+      - name: Smoke test (macOS)
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        timeout-minutes: 5
+        env:
+          RUST_BACKTRACE: '1'
+        run: target/debug/stinkshot --smoke-test

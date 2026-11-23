@@ -17,7 +17,12 @@
 //!   `path` attributes below). Stand-ins never panic: calls that return a `Result` return
 //!   an "is not supported on this OS yet" error, other calls return a harmless default
 //!   (empty list, None, false, (0, 0)) or do nothing. Types that only come from a failed
-//!   constructor (hooks, OCR engine, overlay) cannot be created there.
+//!   constructor (hooks, OCR engine, overlay) cannot be created there. The error is an
+//!   [`Unsupported`], so callers can tell it apart ([`is_unsupported`]).
+//! - Each such module has `pub const SUPPORTED: bool` (`system` has one per feature): true for a
+//!   real implementation, false for a stand-in. The app hides settings by it, and
+//!   `tests/contract.rs` checks stand-in behavior by it, so a new implementation sets it to
+//!   true.
 //! - Data types and pure logic that do not depend on the OS live once in `src/portable/`
 //!   and are re-exported from the module that always held them, with their unit tests, so
 //!   those tests run on every OS.
@@ -94,6 +99,39 @@ pub mod window_util;
 pub mod windows_enum;
 
 pub use util::keep_mta_alive;
+
+/// The error a stand-in returns for a feature this OS has no implementation of yet. Its text
+/// always contains [`UNSUPPORTED_MARK`], so an error that crossed a thread as a string is still
+/// recognized ([`is_unsupported_text`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Unsupported(pub &'static str);
+
+/// The fixed part of every [`Unsupported`] message.
+pub const UNSUPPORTED_MARK: &str = "is not supported on this OS yet";
+
+impl std::fmt::Display for Unsupported {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} {UNSUPPORTED_MARK}", self.0)
+    }
+}
+
+impl std::error::Error for Unsupported {}
+
+/// An [`Unsupported`] error for `what` (for example "screen capture").
+pub fn unsupported(what: &'static str) -> anyhow::Error {
+    anyhow::Error::new(Unsupported(what))
+}
+
+/// Whether `e` (or anything in its chain) says the feature is not supported on this OS yet.
+pub fn is_unsupported(e: &anyhow::Error) -> bool {
+    e.chain().any(|c| c.downcast_ref::<Unsupported>().is_some())
+        || is_unsupported_text(&format!("{e:#}"))
+}
+
+/// [`is_unsupported`] for an error passed on as text.
+pub fn is_unsupported_text(e: &str) -> bool {
+    e.contains(UNSUPPORTED_MARK)
+}
 
 /// Raw HWND value.
 pub type Hwnd = isize;

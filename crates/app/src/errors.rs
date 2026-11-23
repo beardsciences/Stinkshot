@@ -21,6 +21,8 @@ pub enum Cause {
     NetworkPath,
     ClipboardBusy,
     Offline,
+    /// The feature has no implementation on this OS yet (a `stinkshot_platform` stand-in).
+    Unsupported,
     Unknown,
 }
 
@@ -46,6 +48,7 @@ impl Cause {
             Cause::Offline => {
                 tr!("shell.error.offline")
             }
+            Cause::Unsupported => tr!("shell.error.unsupported"),
             Cause::Unknown => return None,
         })
     }
@@ -68,6 +71,9 @@ fn cause_of_code(code: i32) -> Cause {
 /// Never returns `Cause::Offline`: local errors also say "timed out" (capture, recorder start),
 /// so only the update check, the one network call, uses `classify_network_text`.
 pub fn classify_text(chain: &str) -> Cause {
+    if stinkshot_platform::is_unsupported_text(chain) {
+        return Cause::Unsupported;
+    }
     let t = chain.to_ascii_lowercase();
     if t.contains("openclipboard") || t.contains("clipboard is busy") {
         return Cause::ClipboardBusy;
@@ -143,6 +149,9 @@ pub fn classify_network_text(chain: &str) -> Cause {
 
 /// Classify an error: OS codes of `io::Error`s in the chain first, then the chain's text.
 pub fn classify(e: &anyhow::Error) -> Cause {
+    if stinkshot_platform::is_unsupported(e) {
+        return Cause::Unsupported;
+    }
     for cause in e.chain() {
         if let Some(io) = cause.downcast_ref::<std::io::Error>() {
             if let Some(code) = io.raw_os_error() {
@@ -160,6 +169,26 @@ pub fn classify(e: &anyhow::Error) -> Cause {
         }
     }
     classify_text(&format!("{e:#}"))
+}
+
+/// `normal`, or Info when `e` only says the feature is not supported on this OS yet: an
+/// expected state there, not a fault. For optional start-up steps.
+pub fn log_level(e: &anyhow::Error, normal: log::Level) -> log::Level {
+    if stinkshot_platform::is_unsupported(e) {
+        log::Level::Info
+    } else {
+        normal
+    }
+}
+
+/// The title and body for "no text recognition": the install hint, or the not-supported
+/// sentence while this OS has no OCR engine yet.
+pub fn ocr_missing() -> (&'static str, &'static str) {
+    if stinkshot_platform::ocr::SUPPORTED {
+        (tr!("shell.ocr.none"), tr!("shell.ocr.none.body"))
+    } else {
+        (tr!("shell.ocr.unavailable"), tr!("shell.error.unsupported"))
+    }
 }
 
 /// The plain sentence for `cause`, or `fallback`; then `tail` (if any); then, only when the
@@ -266,6 +295,19 @@ mod tests {
     }
 
     #[test]
+    fn unsupported_features_say_so() {
+        let e = stinkshot_platform::unsupported("screen capture").context("freeze_all");
+        assert_eq!(classify(&e), Cause::Unsupported);
+        assert_eq!(classify_text(&format!("{e:#}")), Cause::Unsupported);
+        let s = report("t", &e, "Fallback.");
+        assert_eq!(s, tr!("shell.error.unsupported"));
+        assert_eq!(log_level(&e, log::Level::Error), log::Level::Info);
+        let other = anyhow::anyhow!("The request is not supported. (0x80070032)");
+        assert_eq!(classify(&other), Cause::Unknown);
+        assert_eq!(log_level(&other, log::Level::Error), log::Level::Error);
+    }
+
+    #[test]
     fn local_timeouts_are_not_offline() {
         for e in [
             "recording initialisation timed out",
@@ -322,6 +364,7 @@ mod tests {
             Cause::NetworkPath,
             Cause::ClipboardBusy,
             Cause::Offline,
+            Cause::Unsupported,
         ] {
             let s = c.sentence().unwrap();
             assert!(s.ends_with('.'), "{s}");

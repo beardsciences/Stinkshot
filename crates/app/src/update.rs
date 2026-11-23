@@ -478,7 +478,18 @@ fn parse_version(s: &str) -> (Vec<u64>, bool) {
 /// True in the Microsoft Store build: updates come from the Store, so the update check, Update
 /// Now and `stinkshot update` are off and hidden, whatever the config says.
 pub fn store_build() -> bool {
+    #[cfg(test)]
+    if let Some(store) = TEST_STORE_BUILD.with(|c| c.get()) {
+        return store;
+    }
     stinkshot_platform::system::is_packaged()
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Test-only override of `store_build` on this thread (the demo harness renders the Store
+    /// build's pages for the Store screenshots). Not compiled into the app.
+    pub static TEST_STORE_BUILD: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
 }
 
 /// Whether the update check may run: on in Settings, and not the Store build.

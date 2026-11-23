@@ -6,8 +6,11 @@ use stinkshot_core::{PxPoint, PxRect, Rgba};
 use crate::Hwnd;
 pub use crate::portable::capture::*;
 
+/// Not implemented on this OS yet.
+pub const SUPPORTED: bool = false;
+
 fn unsupported() -> anyhow::Error {
-    anyhow::anyhow!("screen capture is not supported on this OS yet")
+    crate::unsupported("screen capture")
 }
 
 /// Not supported on this OS yet; always an error.
@@ -56,9 +59,7 @@ pub fn lend_duplication() -> DuplicationLease {
 
 /// Not supported on this OS yet; always an error.
 pub fn capture_window(_hwnd: Hwnd, _opts: &WindowCaptureOpts) -> anyhow::Result<Rgba> {
-    Err(anyhow::anyhow!(
-        "window capture is not supported on this OS yet"
-    ))
+    Err(crate::unsupported("window capture"))
 }
 
 /// Always None on this OS yet (the pointer reads as hidden).

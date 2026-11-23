@@ -124,7 +124,7 @@ pub fn save_image(
     _format: ImageFormat,
     _start_dir: Option<&Path>,
 ) -> anyhow::Result<Option<PathBuf>> {
-    anyhow::bail!("the Save As dialog is not supported on this OS yet")
+    Err(stinkshot_platform::unsupported("the Save As dialog"))
 }
 
 /// The image format implied by a file extension (png default).

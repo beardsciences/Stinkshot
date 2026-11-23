@@ -10,6 +10,9 @@ use anyhow::Result;
 
 pub use crate::portable::encoder::*;
 
+/// Not implemented on this OS yet.
+pub const SUPPORTED: bool = false;
+
 /// Cannot be created on this OS yet (`create` always fails).
 pub struct Encoder {
     pub encoder_name: String,
@@ -21,9 +24,7 @@ pub struct Encoder {
 impl Encoder {
     /// Not supported on this OS yet; always an error.
     pub fn create(_path: &Path, _vp: &VideoParams, _audio: bool) -> Result<Encoder> {
-        Err(anyhow::anyhow!(
-            "writing video files is not supported on this OS yet"
-        ))
+        Err(stinkshot_platform::unsupported("writing video files"))
     }
 
     pub fn write_video(&self, _nv12: &[u8], _pts_hns: i64, _dur_hns: i64) -> Result<()> {

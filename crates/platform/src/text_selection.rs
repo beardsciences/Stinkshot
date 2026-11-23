@@ -28,6 +28,9 @@ use windows::core::Interface;
 use crate::Hwnd;
 pub use crate::portable::text_selection::*;
 
+/// Implemented on this OS (the stand-ins say false).
+pub const SUPPORTED: bool = true;
+
 /// Ancestors of the focused element checked for a TextPattern.
 const MAX_ANCESTORS: usize = 6;
 /// Text elements of the fallback window checked for a selection.

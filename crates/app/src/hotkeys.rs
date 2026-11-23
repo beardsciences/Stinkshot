@@ -412,11 +412,15 @@ impl Hotkeys {
         let uses_printscreen = bindings(cfg)
             .iter()
             .any(|(_, s)| s.to_ascii_lowercase().contains("printscreen"));
-        let replace = cfg.replace_snipping_tool;
+        // Both are Windows features: off where the platform has no implementation (Settings
+        // hides them there), whatever a copied config says.
+        let replace = cfg.replace_snipping_tool && stinkshot_platform::snip::SUPPORTED;
         // Replace Snipping Tool implies the PrintScreen takeover. Without a PrintScreen
         // binding the takeover would only hand the key back to the legacy clipboard copy, so
         // it stays off then (Settings says so).
-        let want_takeover = (cfg.take_over_printscreen || replace) && uses_printscreen;
+        let want_takeover = (cfg.take_over_printscreen || replace)
+            && uses_printscreen
+            && stinkshot_platform::system::PRINTSCREEN_SUPPORTED;
         self.set_snip_hook(replace);
         if let Some(h) = &self.snip {
             // Reload leaves everything live (see the end of this function).

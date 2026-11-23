@@ -22,6 +22,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use crate::portable::input::fixed_key_label;
 pub use crate::portable::input::{InputEvent, MouseButton};
 
+/// Implemented on this OS (the stand-ins say false).
+pub const SUPPORTED: bool = true;
+
 pub fn cursor_pos() -> PxPoint {
     let mut p = POINT::default();
     // SAFETY: out pointer is a live local.

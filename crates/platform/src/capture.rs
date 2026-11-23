@@ -63,6 +63,9 @@ use crate::hdr::{self, DisplayColor};
 use crate::monitors::{self, rect_from_win};
 pub use crate::portable::capture::*;
 
+/// Implemented on this OS (the stand-ins say false).
+pub const SUPPORTED: bool = true;
+
 pub fn freeze_all(include_cursor: bool) -> anyhow::Result<Frozen> {
     let bounds = monitors::virtual_bounds();
     if bounds.is_empty() {

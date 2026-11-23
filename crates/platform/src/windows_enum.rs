@@ -23,6 +23,9 @@ use crate::monitors::rect_from_win;
 use crate::occlusion::Layer;
 pub use crate::portable::windows_enum::*;
 
+/// Implemented on this OS (the stand-ins say false).
+pub const SUPPORTED: bool = true;
+
 fn to_hwnd(h: Hwnd) -> HWND {
     HWND(h as *mut _)
 }

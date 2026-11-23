@@ -5,6 +5,9 @@ use anyhow::Result;
 
 use crate::{RecordOptions, RecordingResult, Status};
 
+/// Not implemented on this OS yet.
+pub const SUPPORTED: bool = false;
+
 /// Cannot be created on this OS yet (`start` always fails).
 pub struct Recorder {
     _never: std::convert::Infallible,
@@ -13,9 +16,7 @@ pub struct Recorder {
 impl Recorder {
     /// Not supported on this OS yet; always an error.
     pub fn start(_opts: RecordOptions) -> Result<Recorder> {
-        Err(anyhow::anyhow!(
-            "screen recording is not supported on this OS yet"
-        ))
+        Err(stinkshot_platform::unsupported("screen recording"))
     }
 
     pub fn capture_backend(&self) -> &'static str {

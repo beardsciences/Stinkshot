@@ -422,7 +422,10 @@ pub fn finish_capture(env: &Env, out: CaptureOutput) {
         let mut copied_text = None;
         if action == FinishAction::CopyText {
             match &env.ocr {
-                None => env.notify(tr!("shell.ocr.none"), tr!("shell.ocr.none.body"), true),
+                None => {
+                    let (title, body) = errors::ocr_missing();
+                    env.notify(title, body, true)
+                }
                 Some(engine) => match engine.recognize(&flattened) {
                     Ok(r) => {
                         let text = r.text.trim().to_string();
@@ -585,7 +588,8 @@ pub fn find_selected_text(env: &Env, fallback: Option<stinkshot_platform::Hwnd>,
 pub fn ocr_image(env: &Env, img: Rgba) {
     job(env, "ocr-region", move |env| {
         let Some(engine) = &env.ocr else {
-            env.notify(tr!("shell.ocr.none"), tr!("shell.ocr.none.body"), true);
+            let (title, body) = errors::ocr_missing();
+            env.notify(title, body, true);
             return;
         };
         match engine.recognize(&img) {
@@ -1145,7 +1149,8 @@ pub fn copy_item_text(env: &Env, id: ItemId) {
             Ok(Some(t)) => env.notify(tr!("shell.saved.text"), preview(&t, 140), false),
             Ok(None) => env.notify(tr!("shell.ocr.no_text"), tr!("shell.ocr.item_none"), false),
             Err(e) if format!("{e:#}").contains(NO_OCR_MARK) => {
-                env.notify(tr!("shell.ocr.none"), tr!("shell.ocr.none.body"), true)
+                let (title, body) = errors::ocr_missing();
+                env.notify(title, body, true)
             }
             Err(e) => env.notify(tr!("shell.ocr.copy_failed"), item_copy_error(&e), true),
         }

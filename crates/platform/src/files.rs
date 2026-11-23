@@ -14,6 +14,9 @@ use windows::Win32::Storage::FileSystem::{
 
 pub use crate::portable::files::*;
 
+/// Implemented on this OS (the stand-ins say false).
+pub const SUPPORTED: bool = true;
+
 const FILE_READ_DATA: u32 = 0x0001;
 const FILE_READ_ATTRIBUTES: u32 = 0x0080;
 const FILE_WRITE_ATTRIBUTES: u32 = 0x0100;

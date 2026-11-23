@@ -11,6 +11,9 @@ use anyhow::Result;
 
 pub use crate::portable::mfread::*;
 
+/// Not implemented on this OS yet.
+pub const SUPPORTED: bool = false;
+
 /// Cannot be created on this OS yet (`open` always fails).
 pub struct Reader {
     pub width: u32,
@@ -25,9 +28,7 @@ pub struct Reader {
 impl Reader {
     /// Not supported on this OS yet; always an error.
     pub fn open(_path: &Path, _video: bool, _audio: bool) -> Result<Reader> {
-        Err(anyhow::anyhow!(
-            "reading video files is not supported on this OS yet"
-        ))
+        Err(stinkshot_platform::unsupported("reading video files"))
     }
 
     pub fn seek(&self, _hns: i64) -> Result<()> {

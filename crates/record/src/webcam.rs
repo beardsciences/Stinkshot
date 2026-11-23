@@ -14,6 +14,9 @@ use crate::mf::{MfSession, activate_name, pack, unpack};
 use crate::mfread::sample_to_bgra;
 use crate::overlay::WebcamFrame;
 
+/// Implemented on this OS (the stand-ins say false).
+pub const SUPPORTED: bool = true;
+
 fn enum_activates() -> Result<Vec<IMFActivate>> {
     unsafe {
         let mut attrs: Option<IMFAttributes> = None;

@@ -67,6 +67,10 @@ pub fn get(key: &str) -> Option<&'static str> {
         "shell.error.offline" => {
             "No se pudo conectar con stinkshot.com. Revisa la conexión y vuelve a intentarlo."
         }
+        "shell.error.unsupported" => {
+            "Esto todavía no funciona en este sistema. Por ahora solo funciona en Windows."
+        }
+        "shell.unsupported" => "Todavía no disponible",
         "shell.toast.edit" => "Editar",
         "shell.toast.copy" => "Copiar",
         "shell.toast.pin" => "Fijar",
@@ -379,6 +383,7 @@ pub fn get(key: &str) -> Option<&'static str> {
             "Stinkshot tuvo un error interno y detuvo esa tarea. Vuelve a intentarlo. {hint}"
         }
         "shell.ocr.none" => "No hay ningún idioma con reconocimiento de texto",
+        "shell.ocr.unavailable" => "Reconocimiento de texto no disponible",
         "shell.ocr.none.body" => {
             "Agrega un idioma con reconocimiento de texto en Configuración de Windows > Hora e idioma > Idioma y región."
         }

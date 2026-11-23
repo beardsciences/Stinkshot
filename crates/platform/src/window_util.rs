@@ -27,6 +27,9 @@ use windows::core::BOOL;
 use crate::Hwnd;
 pub use crate::portable::window_util::*;
 
+/// Implemented on this OS (the stand-ins say false).
+pub const SUPPORTED: bool = true;
+
 fn h(hwnd: Hwnd) -> HWND {
     HWND(hwnd as *mut _)
 }

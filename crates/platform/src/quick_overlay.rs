@@ -36,6 +36,9 @@ use crate::dpi::ThreadPerMonitorAware;
 pub use crate::portable::quick_overlay::QuickInput;
 use crate::portable::quick_overlay::{button_up, capture_lost};
 
+/// Implemented on this OS (the stand-ins say false).
+pub const SUPPORTED: bool = true;
+
 /// Black veil over the frozen screen, as the overlay's `overlay_dim` (alpha 148 of 255).
 const DIM_ALPHA: u32 = 148;
 

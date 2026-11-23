@@ -5,6 +5,9 @@ use stinkshot_core::Rgba;
 
 pub use crate::portable::ocr::*;
 
+/// Not implemented on this OS yet.
+pub const SUPPORTED: bool = false;
+
 /// Stand-in for the Windows.Media.Ocr engine (the name consumers use). It cannot be created
 /// on this OS yet, so no value exists.
 pub struct WindowsOcr {
@@ -14,7 +17,7 @@ pub struct WindowsOcr {
 impl WindowsOcr {
     /// Not supported on this OS yet; always an error.
     pub fn new() -> anyhow::Result<WindowsOcr> {
-        Err(anyhow::anyhow!("OCR is not supported on this OS yet"))
+        Err(crate::unsupported("OCR"))
     }
 }
 

@@ -104,6 +104,11 @@ fn recent(at: Option<Instant>, window: Duration) -> bool {
 
 impl Tray {
     pub fn new(config: &Config) -> anyhow::Result<Tray> {
+        // On Linux tray-icon builds GTK menus, which panics unless GTK is initialized, and
+        // the icon needs a GTK main loop the app does not run yet.
+        if cfg!(target_os = "linux") {
+            return Err(stinkshot_platform::unsupported("the tray icon"));
+        }
         let menu = Menu::new();
         let header = MenuItem::new(header_text(config), false, None);
         menu.append(&header).context("tray menu")?;

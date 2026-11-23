@@ -10,6 +10,9 @@ use windows::core::{GUID, HSTRING, Interface};
 use crate::mf::{MfSession, pack, unpack};
 pub use crate::portable::mfread::*;
 
+/// Implemented on this OS (the stand-ins say false).
+pub const SUPPORTED: bool = true;
+
 const VIDEO: u32 = MF_SOURCE_READER_FIRST_VIDEO_STREAM.0 as u32;
 const AUDIO: u32 = MF_SOURCE_READER_FIRST_AUDIO_STREAM.0 as u32;
 const ALL: u32 = MF_SOURCE_READER_ALL_STREAMS.0 as u32;

@@ -5,12 +5,20 @@ use std::path::Path;
 use std::sync::mpsc::Sender;
 
 pub use crate::portable::system::{EndSessionPhase, SessionEvent};
+use crate::unsupported;
 
-fn unsupported(what: &str) -> anyhow::Error {
-    anyhow::anyhow!("{what} is not supported on this OS yet")
-}
+// Nothing below is implemented on this OS yet.
+/// `set_autostart` and `autostart_enabled` (Start With Windows).
+pub const AUTOSTART_SUPPORTED: bool = false;
+/// `take_over_printscreen`.
+pub const PRINTSCREEN_SUPPORTED: bool = false;
+/// `acquire_single_instance`, `send_to_running_instance` and `start_ipc_listener`.
+pub const SINGLE_INSTANCE_SUPPORTED: bool = false;
+/// `start_session_watcher` and `set_end_session_handler`.
+pub const SESSION_EVENTS_SUPPORTED: bool = false;
+/// `reveal_in_explorer` and `open_path`.
+pub const OPEN_SUPPORTED: bool = false;
 
-/// Not supported on this OS yet; always an error.
 /// Never packaged on this OS.
 pub fn package_family() -> Option<&'static str> {
     None
@@ -26,6 +34,7 @@ pub fn launched_at_startup() -> bool {
     false
 }
 
+/// Not supported on this OS yet; always an error.
 pub fn set_autostart(_enabled: bool, _exe: &Path) -> anyhow::Result<()> {
     Err(unsupported("autostart"))
 }

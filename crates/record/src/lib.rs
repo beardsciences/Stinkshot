@@ -27,7 +27,7 @@
 //! - Windows implementations stay in place (`src/<module>.rs`) and only build on Windows.
 //! - On other OSes each such module is swapped for a stand-in in `src/unsupported/` (see the
 //!   `path` attributes below). Stand-ins never panic: calls that return a `Result` return
-//!   an "is not supported on this OS yet" error, device lists are empty and
+//!   a `stinkshot_platform::Unsupported` error, device lists are empty and
 //!   `primary_monitor_rect` is None. Types that only come from a failed constructor
 //!   (`Recorder`, capturer, encoder, reader, webcam) cannot be created there. So
 //!   `Recorder::start`, `probe`, `thumbnails`, `frame_at`, `trim`, `to_gif` and `decode_all`
@@ -93,6 +93,18 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use stinkshot_core::{PxRect, Rgba};
+
+// What works on this OS: each module has `SUPPORTED` (false in its stand-in). A false entry
+// means the calls it covers fail with `stinkshot_platform::Unsupported` (lists are empty,
+// `primary_monitor_rect` is None). `tests/contract.rs` checks this.
+/// `Recorder::start` and `primary_monitor_rect`.
+pub const RECORDING_SUPPORTED: bool = recorder::SUPPORTED && capture::SUPPORTED;
+/// `probe`, `thumbnails`, `frame_at`, `trim`, `to_gif` and `decode_all`.
+pub const VIDEO_FILES_SUPPORTED: bool = mf::SUPPORTED && mfread::SUPPORTED && encoder::SUPPORTED;
+/// `list_microphones` and a microphone track.
+pub const MICROPHONES_SUPPORTED: bool = audio::SUPPORTED;
+/// `list_webcams` and the webcam bubble.
+pub const WEBCAMS_SUPPORTED: bool = webcam::SUPPORTED;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Corner {

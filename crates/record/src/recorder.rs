@@ -25,6 +25,9 @@ use crate::timeline::{FrameScheduler, Timeline, pts_hns};
 use crate::webcam::Webcam;
 use crate::{RecordOptions, RecordingResult, Status};
 
+/// Implemented on this OS (the stand-ins say false).
+pub const SUPPORTED: bool = true;
+
 /// Audio may run this far ahead of the output clock before the oldest data is discarded.
 const MAX_AUDIO_LEAD_FRAMES: usize = (OUT_RATE as usize) / 10;
 /// What the video thread reports once capture and encoder are up: the shared encoder, its

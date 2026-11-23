@@ -6,6 +6,9 @@ use stinkshot_core::PxRect;
 use crate::Hwnd;
 pub use crate::portable::window_util::*;
 
+/// Not implemented on this OS yet.
+pub const SUPPORTED: bool = false;
+
 /// Always None on this OS yet.
 pub fn find_own_window(_title: &str) -> Option<Hwnd> {
     None

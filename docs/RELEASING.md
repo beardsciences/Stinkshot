@@ -129,6 +129,23 @@ At the end it reads `SHA256SUMS` and the manifest back, hashes every listed file
 verifies both signatures with the key the app embeds. About 4 minutes with warm caches;
 30 minutes cold with `-Jobs 4`.
 
+Then it runs `scripts/site-media.ps1` on the same commit (skip with `-SkipMedia`; dry runs
+skip it). That renders the app's own windows offscreen from that commit with demo History
+content and default settings (a debug test build of `overlay/demo_clips.rs`; nothing on your
+screen, your installed copy or its settings is touched) and writes:
+
+| Where | What |
+|---|---|
+| `C:\dev\stinkshot-site\media-staging\video`, `img` | the site's clips and Settings crops. Not live: step 5 publishes them |
+| `C:\dev\stinkshot-site\media-staging\shots` | whole-window pictures (History, search, Settings pages, About, editor), dark and light, lossless WebP at 125 %, with `shots.json` |
+| `dist\store\listing\01-*.png` | Microsoft Store screenshots, 2560x1440 PNG, in the Store build's UI (no update check), upload in name order (`README.txt` lists them) |
+
+Look at them before step 5: a UI change can move what a scripted click was aimed at. To
+render again without a release build:
+`scripts/site-media.ps1 -Version X.Y.Z -Ref <commit>` (add `-ShotsOnly` for only the
+window pictures and Store screenshots, or `-StoreOnly` for only the Store set; `update-site.ps1`
+refuses a partial set).
+
 `-AllowDirty` is for dry runs: the output folder gets a `-dirty` suffix and nothing in it is
 signed. The publish scripts refuse such a folder.
 
@@ -185,16 +202,12 @@ saved. The order is: downloads, then the page, then the update manifest last, so
 never points anyone at a file that is not there yet. `tools/update-site.ps1` does it in that
 order.
 
-First re-render the site's clips and screenshots from the new tag, from this repo:
+The clips and screenshots are already staged in the site repo's `media-staging\` (step 2). If
+you skipped that, render them now from the tag, from this repo:
 
 ```
 powershell -ExecutionPolicy Bypass -File scripts/site-media.ps1 -Version X.Y.Z
 ```
-
-It checks out the tag, drives the app's own UI offscreen (nothing on your screen is touched),
-writes the clips and crops into the site and records the version in the site's `media.json`.
-The site's `tools/check_site.py` fails while the media is older than the release. Look at the
-pages afterwards: a UI change can move a button a scripted click was aimed at.
 
 Then, from the site repo:
 
@@ -207,6 +220,9 @@ The first command is a dry run: it checks the dist folder and prints every copy 
 text change, and changes nothing. The second does it:
 
 - copies the installer, zip, SBOM, `SHA256SUMS` and `SHA256SUMS.minisig` to `site/download/`
+- copies the staged clips and crops from `media-staging\` to `site/video/` and `site/img/` and
+  writes `media.json`. It stops before changing anything unless they were rendered from the
+  commit the manifest names (`-SkipMedia` leaves the old media; `check_site.py` then fails)
 - rewrites the version, file names, file size and SHA-256 in `site/index.html`, and the
   "Releases up to X are not code-signed" line in `site/code-signing/index.html` (pass
   `-KeepSigningStatus` for the first signed release and edit that page by hand)

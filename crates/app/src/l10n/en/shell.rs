@@ -58,6 +58,10 @@ pub fn get(key: &str) -> Option<&'static str> {
         "shell.error.offline" => {
             "Could not reach stinkshot.com. Check your connection and try again."
         }
+        "shell.error.unsupported" => {
+            "This is not supported on this system yet. It works on Windows for now."
+        }
+        "shell.unsupported" => "Not Available Yet",
         "shell.toast.edit" => "Edit",
         "shell.toast.copy" => "Copy",
         "shell.toast.pin" => "Pin",
@@ -352,6 +356,7 @@ pub fn get(key: &str) -> Option<&'static str> {
             "Stinkshot hit an internal error and stopped that task. Try again. {hint}"
         }
         "shell.ocr.none" => "No Text Recognition Language Installed",
+        "shell.ocr.unavailable" => "Text Recognition Not Available",
         "shell.ocr.none.body" => {
             "Add a language with text recognition in Windows Settings > Time & language > Language & region."
         }
@@ -476,6 +481,8 @@ pub const KEYS: &[&str] = &[
     "shell.error.network_path",
     "shell.error.clipboard_busy",
     "shell.error.offline",
+    "shell.error.unsupported",
+    "shell.unsupported",
     "shell.toast.edit",
     "shell.toast.copy",
     "shell.toast.pin",
@@ -704,6 +711,7 @@ pub const KEYS: &[&str] = &[
     "shell.url.failed",
     "shell.internal.body",
     "shell.ocr.none",
+    "shell.ocr.unavailable",
     "shell.ocr.none.body",
     "shell.item.recycle_failed",
     "shell.hotkey.row.invalid",

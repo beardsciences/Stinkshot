@@ -6,6 +6,9 @@ SHA256SUMS and the signed update manifest. Publishes nothing.
 .DESCRIPTION
 Runs on Windows PowerShell 5.1 and PowerShell 7. Everything lands in -OutDir
 (default dist\<version>); docs/RELEASING.md has the full procedure and the publish steps.
+Last, scripts/site-media.ps1 renders the site's clips and screenshots from the same commit
+into the site repo's media-staging\ (not live) and the Store screenshots into
+dist\store\listing\. -SkipMedia skips that.
 
 Release builds go to -TargetDir (default target-dist next to the repo's target folder),
 never to target\ itself, so a running target\release\stinkshot.exe is not touched.
@@ -40,6 +43,8 @@ param(
     [string]$TargetDir,
     [string]$OutDir,
     [switch]$SkipTests,
+    # Skip rendering the site media and Store screenshots (scripts/site-media.ps1).
+    [switch]$SkipMedia,
     # Caps parallel rustc jobs (CARGO_BUILD_JOBS); lower it when the box is short on memory.
     [int]$Jobs,
     [switch]$AllowDirty,
@@ -450,6 +455,22 @@ try {
         if ($wingetText -notmatch "(?m)^\s*InstallerUrl: https://stinkshot\.com/download/Stinkshot-$([regex]::Escape($Version))-x64-setup\.exe\s*$") { Fail 'the winget manifest does not point at this setup file.' }
     }
 
+    # ------------------------------------------- site media + Store screenshots
+    # The app's own UI from this commit, rendered offscreen (debug harness build). Staged
+    # only: the site's update-site.ps1 publishes it with the downloads.
+    if ($SkipMedia) {
+        Write-Warning '-SkipMedia: site media and Store screenshots not rendered. update-site.ps1 needs them (or its -SkipMedia).'
+    } elseif ($AllowDirty) {
+        Write-Host 'Dry run: site media not rendered (scripts/site-media.ps1 -Ref HEAD -ShotsOnly tries the screenshots).'
+    } else {
+        Step 'site media and Store screenshots (scripts/site-media.ps1)'
+        $env:CARGO_ENCODED_RUSTFLAGS = $savedEnv['CARGO_ENCODED_RUSTFLAGS']
+        $mediaJobs = if ($Jobs -gt 0) { $Jobs } else { 2 }
+        $ps = (Get-Process -Id $PID).Path
+        Invoke-Native $ps @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $PSScriptRoot 'site-media.ps1'),
+            '-Version', $Version, '-Ref', $commit, '-Jobs', "$mediaJobs")
+    }
+
     Step 'done'
     Get-ChildItem -LiteralPath $OutDir | Select-Object Name, Length | Format-Table -AutoSize | Out-String | Write-Host
     if ($Sign -eq 'none') { Write-Host 'Artifacts are not Authenticode-signed (-Sign none).' }
@@ -461,7 +482,7 @@ try {
         Write-Host 'Next steps (docs/RELEASING.md):'
         Write-Host "  1. Smoke test:  powershell -ExecutionPolicy Bypass -File scripts/smoke-test.ps1 -DistDir `"$OutDir`" -TargetDir `"$TargetDir`""
         Write-Host "  2. Tag $commit as $Tag and push the branch and the tag."
-        Write-Host "  3. Site: in the stinkshot-site repo, tools/update-site.ps1 -DistDir `"$OutDir`" (dry run), then again with -Apply."
+        Write-Host "  3. Look at the staged media (stinkshot-site\media-staging) and dist\store\listing. Site: in the stinkshot-site repo, tools/update-site.ps1 -DistDir `"$OutDir`" (dry run), then again with -Apply."
         Write-Host '  4. Run the checks in the site''s DEPLOY.md (step 4).'
         Write-Host "  5. Forgejo release:  powershell -ExecutionPolicy Bypass -File scripts/publish-forgejo.ps1 -Version $Version -DistDir `"$OutDir`""
         Write-Host "  6. GitHub release on the mirror: gh release create $Tag (docs/RELEASING.md, step 8)."

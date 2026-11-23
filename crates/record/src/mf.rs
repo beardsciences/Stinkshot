@@ -7,6 +7,9 @@ use windows::core::GUID;
 
 pub use crate::portable::mf::*;
 
+/// Implemented on this OS (the stand-ins say false).
+pub const SUPPORTED: bool = true;
+
 /// COM initialisation for the current thread (MTA). Tolerates a thread that is already STA.
 pub struct ComGuard(bool);
 

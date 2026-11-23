@@ -889,7 +889,10 @@ impl Overlay {
         if config.capture.snap_to_elements && !matches!(mode, OverlayMode::Annotate { .. }) {
             match ElementSnapper::new() {
                 Ok(s) => o.snapper = Some(s),
-                Err(e) => log::warn!("overlay: element snapping unavailable: {e:#}"),
+                Err(e) => {
+                    let level = crate::errors::log_level(&e, log::Level::Warn);
+                    log::log!(level, "overlay: element snapping unavailable: {e:#}");
+                }
             }
         }
 

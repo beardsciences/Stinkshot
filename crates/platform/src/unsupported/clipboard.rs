@@ -2,8 +2,13 @@
 
 use stinkshot_core::Rgba;
 
+/// Not implemented on this OS yet.
+pub const SUPPORTED: bool = false;
+/// `set_allow_history` does nothing on this OS yet.
+pub const HISTORY_MARKERS_SUPPORTED: bool = false;
+
 fn unsupported() -> anyhow::Error {
-    anyhow::anyhow!("the clipboard is not supported on this OS yet")
+    crate::unsupported("the clipboard")
 }
 
 /// Does nothing on this OS yet.

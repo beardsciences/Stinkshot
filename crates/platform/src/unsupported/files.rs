@@ -6,6 +6,9 @@ use std::time::SystemTime;
 
 pub use crate::portable::files::*;
 
+/// Not implemented on this OS yet.
+pub const SUPPORTED: bool = false;
+
 /// Not supported on this OS yet; always an error, so the caller keeps `replacement`.
 pub fn replace_if_unchanged(
     _original: &Path,
@@ -13,9 +16,7 @@ pub fn replace_if_unchanged(
     _expect_len: u64,
     _expect_modified: SystemTime,
 ) -> anyhow::Result<Replace> {
-    Err(anyhow::anyhow!(
-        "replacing a file in place is not supported on this OS yet"
-    ))
+    Err(crate::unsupported("replacing a file in place"))
 }
 
 /// Does nothing on this OS yet (the thread keeps its normal priority).

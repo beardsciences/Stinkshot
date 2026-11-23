@@ -9,8 +9,11 @@ use anyhow::Result;
 
 pub use crate::portable::mf::*;
 
+/// Not implemented on this OS yet.
+pub const SUPPORTED: bool = false;
+
 fn unsupported() -> anyhow::Error {
-    anyhow::anyhow!("video encoding and decoding is not supported on this OS yet")
+    stinkshot_platform::unsupported("video encoding and decoding")
 }
 
 /// Does nothing on this OS yet (there is no COM to initialise).

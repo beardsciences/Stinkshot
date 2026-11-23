@@ -23,8 +23,8 @@ use egui::{
 use stinkshot_core::config::{Config, Hotkeys};
 use stinkshot_core::image::ImageFormat;
 use stinkshot_history::Stats;
-use stinkshot_platform::Hwnd;
 use stinkshot_platform::snip::SnipChord;
+use stinkshot_platform::{Hwnd, clipboard, snip, system};
 
 use self::ui_hotkey::{Captured, display, same_combo};
 use crate::hotkeys::SnipStatus;
@@ -1289,12 +1289,15 @@ impl SettingsWindow {
     fn page_general(&mut self, ui: &mut Ui, shared: &mut Shared, accent: Color32) {
         let p = uc::pal(shared);
         let g = &mut shared.config.general;
-        toggle_row(
-            ui,
-            tr!("settings.general.start_with_windows"),
-            tr!("settings.general.start_with_windows.desc"),
-            &mut g.start_with_windows,
-        );
+        // Windows-only rows are hidden where the platform has no implementation yet.
+        if system::AUTOSTART_SUPPORTED {
+            toggle_row(
+                ui,
+                tr!("settings.general.start_with_windows"),
+                tr!("settings.general.start_with_windows.desc"),
+                &mut g.start_with_windows,
+            );
+        }
         widgets::setting_row(
             ui,
             tr!("settings.theme"),
@@ -1468,14 +1471,52 @@ impl SettingsWindow {
     fn page_hotkeys(&mut self, ui: &mut Ui, shared: &mut Shared, key_consumed: bool) {
         let p = uc::pal(shared);
         let accent = uc::accent(shared);
-        group_title(ui, p, tr!("settings.hotkeys.integration"));
+        let routes = crate::hotkeys::snip_routes(&shared.config.hotkeys);
+        let browsing = !search::searching();
+        if snip::SUPPORTED || system::PRINTSCREEN_SUPPORTED {
+            group_title(ui, p, tr!("settings.hotkeys.integration"));
+        }
+        if snip::SUPPORTED {
+            self.snip_rows(ui, shared, accent, routes, browsing);
+        }
+        if snip::SUPPORTED && shared.config.hotkeys.replace_snipping_tool {
+            // Included in Replace Snipping Tool: shown on and locked.
+            let mut on = true;
+            ui.add_enabled_ui(false, |ui| {
+                toggle_row(
+                    ui,
+                    tr!("settings.hotkeys.printscreen"),
+                    tr!("settings.hotkeys.printscreen.locked"),
+                    &mut on,
+                );
+            });
+        } else if system::PRINTSCREEN_SUPPORTED {
+            toggle_row(
+                ui,
+                tr!("settings.hotkeys.printscreen"),
+                tr!("settings.hotkeys.printscreen.desc"),
+                &mut shared.config.hotkeys.take_over_printscreen,
+            );
+        }
+        self.hotkey_rows(ui, shared, key_consumed, routes, browsing);
+    }
+
+    /// Replace Snipping Tool and its status lines (Windows only).
+    fn snip_rows(
+        &mut self,
+        ui: &mut Ui,
+        shared: &mut Shared,
+        accent: Color32,
+        routes: [(SnipChord, HotkeyField); 2],
+        browsing: bool,
+    ) {
+        let p = uc::pal(shared);
         toggle_row(
             ui,
             tr!("settings.hotkeys.replace_snip"),
             tr!("settings.hotkeys.replace_snip.desc"),
             &mut shared.config.hotkeys.replace_snipping_tool,
         );
-        let routes = crate::hotkeys::snip_routes(&shared.config.hotkeys);
         let (status, tone) = snip_status_line(
             &self.snip_status,
             &shared.config.hotkeys,
@@ -1486,7 +1527,6 @@ impl SettingsWindow {
             Tone::Bad => p.danger,
             Tone::Neutral => p.text_tertiary,
         };
-        let browsing = !search::searching();
         let mut lines = Vec::new();
         if !status.is_empty() {
             lines.push((status, color));
@@ -1511,25 +1551,18 @@ impl SettingsWindow {
             });
             ui.add_space(4.0);
         }
-        if shared.config.hotkeys.replace_snipping_tool {
-            // Included in Replace Snipping Tool: shown on and locked.
-            let mut on = true;
-            ui.add_enabled_ui(false, |ui| {
-                toggle_row(
-                    ui,
-                    tr!("settings.hotkeys.printscreen"),
-                    tr!("settings.hotkeys.printscreen.locked"),
-                    &mut on,
-                );
-            });
-        } else {
-            toggle_row(
-                ui,
-                tr!("settings.hotkeys.printscreen"),
-                tr!("settings.hotkeys.printscreen.desc"),
-                &mut shared.config.hotkeys.take_over_printscreen,
-            );
-        }
+    }
+
+    /// The hotkey error banner, the shortcut list and Reset.
+    fn hotkey_rows(
+        &mut self,
+        ui: &mut Ui,
+        shared: &mut Shared,
+        key_consumed: bool,
+        routes: [(SnipChord, HotkeyField); 2],
+        browsing: bool,
+    ) {
+        let p = uc::pal(shared);
         if browsing && !self.hotkey_errors.is_empty() {
             ui.add_space(4.0);
             let text = hotkey_banner(&self.hotkey_errors);
@@ -1641,9 +1674,9 @@ impl SettingsWindow {
                 }
             }
         }
-        // The Snipping Tool chords: fixed keys, routed by Replace Snipping Tool.
+        // The Snipping Tool chords: fixed keys, routed by Replace Snipping Tool (Windows only).
         let replace = shared.config.hotkeys.replace_snipping_tool;
-        for (chord, action) in routes {
+        for (chord, action) in routes.into_iter().filter(|_| snip::SUPPORTED) {
             let (title, desc) = snip_chord_row(chord, action, replace);
             widgets::setting_row(ui, &title, &desc, |ui| {
                 ui.add_enabled_ui(false, |ui| {
@@ -1672,7 +1705,6 @@ impl SettingsWindow {
             };
             self.capturing = None;
         }
-        let _ = accent;
     }
 
     fn page_capture(&mut self, ui: &mut Ui, shared: &mut Shared, accent: Color32) {
@@ -2462,12 +2494,14 @@ impl SettingsWindow {
         if !crate::update::store_build() {
             self.update_rows(ui, shared);
         }
-        toggle_row(
-            ui,
-            tr!("settings.privacy.clipboard_history"),
-            tr!("settings.privacy.clipboard_history.desc"),
-            &mut shared.config.privacy.clipboard_history,
-        );
+        if clipboard::HISTORY_MARKERS_SUPPORTED {
+            toggle_row(
+                ui,
+                tr!("settings.privacy.clipboard_history"),
+                tr!("settings.privacy.clipboard_history.desc"),
+                &mut shared.config.privacy.clipboard_history,
+            );
+        }
         self.privacy_footer(ui, shared);
     }
 
@@ -2665,7 +2699,11 @@ impl SettingsWindow {
                 // No LOG_HINT here: it would point back at this button.
                 body: {
                     log::warn!("show log: {e:#}");
-                    tr!("settings.about.log_failed.body").into()
+                    if stinkshot_platform::is_unsupported(&e) {
+                        tr!("shell.error.unsupported").into()
+                    } else {
+                        tr!("settings.about.log_failed.body").into()
+                    }
                 },
                 error: true,
             });

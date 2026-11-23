@@ -4,6 +4,9 @@ use stinkshot_core::{PxPoint, PxRect};
 
 pub use crate::portable::monitors::*;
 
+/// Not implemented on this OS yet.
+pub const SUPPORTED: bool = false;
+
 /// Always empty on this OS yet.
 pub fn list() -> Vec<Monitor> {
     Vec::new()

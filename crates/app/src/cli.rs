@@ -61,6 +61,9 @@ struct Cli {
     /// Start in the tray only (used by start-with-Windows).
     #[arg(long)]
     tray: bool,
+    /// CI start-up check (`shell::smoke`): Settings in a temporary profile, a few frames, exit.
+    #[arg(long, hide = true, exclusive = true)]
+    smoke_test: bool,
     #[command(subcommand)]
     cmd: Option<Sub>,
 }
@@ -228,12 +231,34 @@ fn into_action(cli: Cli, raw_args: Vec<String>) -> CliAction {
 /// Parse the process arguments. Prints help/version/usage errors and exits as clap does.
 pub fn parse() -> CliAction {
     let raw: Vec<String> = std::env::args().skip(1).collect();
-    let mut cli = Cli::parse();
+    let mut cli = parse_from(std::env::args()).unwrap_or_else(|e| e.exit());
     // The Store build's startup task cannot pass `--tray`: a startup launch is a tray launch.
     if stinkshot_platform::system::launched_at_startup() {
         cli.tray = true;
     }
     into_action(cli, raw)
+}
+
+/// `Cli::try_parse_from`, plus the one rule clap cannot express: `--smoke-test` takes no
+/// subcommand (`exclusive` only covers arguments).
+fn parse_from(argv: impl IntoIterator<Item = String>) -> Result<Cli, clap::Error> {
+    let cli = Cli::try_parse_from(argv)?;
+    if cli.smoke_test && cli.cmd.is_some() {
+        return Err(<Cli as clap::CommandFactory>::command().error(
+            clap::error::ErrorKind::ArgumentConflict,
+            "--smoke-test cannot be used with a subcommand",
+        ));
+    }
+    Ok(cli)
+}
+
+/// `stinkshot --smoke-test`. Anything else (including a usage error) is left to `parse`.
+pub fn smoke_test_requested() -> bool {
+    is_smoke_test(std::env::args())
+}
+
+fn is_smoke_test(argv: impl IntoIterator<Item = String>) -> bool {
+    parse_from(argv).is_ok_and(|c| c.smoke_test)
 }
 
 /// Map forwarded IPC args (same grammar as `parse`) to a command.
@@ -334,6 +359,24 @@ mod tests {
             Cli::try_parse_from(["stinkshot", "soak", "search", "x"]).is_err(),
             "soak must not parse"
         );
+    }
+
+    #[test]
+    fn smoke_test_flag_is_alone_and_hidden() {
+        assert!(is_smoke_test(args(&["stinkshot", "--smoke-test"])));
+        assert!(!is_smoke_test(args(&["stinkshot"])));
+        assert!(!is_smoke_test(args(&["stinkshot", "--tray"])));
+        for bad in [&["--smoke-test", "--tray"][..], &["--smoke-test", "region"]] {
+            let argv = args(&[&["stinkshot"], bad].concat());
+            assert!(!is_smoke_test(argv.clone()));
+            assert!(parse_from(argv).is_err(), "{bad:?} must not parse");
+        }
+        // Forwarded to a running instance it is no command.
+        assert!(command_from_args(&args(&["--smoke-test"])).is_none());
+        let help = <Cli as clap::CommandFactory>::command()
+            .render_long_help()
+            .to_string();
+        assert!(!help.contains("smoke"), "{help}");
     }
 
     #[test]

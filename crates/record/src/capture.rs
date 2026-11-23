@@ -41,6 +41,9 @@ use windows::core::{BOOL, Interface};
 use crate::mf::{ComGuard, SendCom};
 pub use crate::portable::capture::*;
 
+/// Implemented on this OS (the stand-ins say false).
+pub const SUPPORTED: bool = true;
+
 /// How long WGC gets to create its sessions before we fall back to Desktop Duplication.
 const WGC_INIT_TIMEOUT: Duration = Duration::from_secs(3);
 

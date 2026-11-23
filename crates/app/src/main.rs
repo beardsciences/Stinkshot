@@ -48,6 +48,10 @@ mod workers;
 
 fn main() -> anyhow::Result<()> {
     restrict_dll_search();
+    // Before `shell::run` reads the profile: the smoke test switches to a temporary one.
+    if cli::smoke_test_requested() {
+        shell::smoke::run();
+    }
     shell::run()
 }
 
