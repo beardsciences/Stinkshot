@@ -68,17 +68,13 @@ first run of the installer and of the portable exe; users click More info, then 
 warning fades as a file builds reputation and starts over with every new unsigned build. The
 README and the site say so.
 
-The plan is SignPath Foundation (free for open source). The published policy
-(https://stinkshot.com/code-signing/) says signed files are built only by GitHub Actions on
-GitHub-hosted runners, from the public source at the release tag, and that nothing built on a
-personal PC is signed. `.github/workflows/release-build.yml` on the GitHub mirror does that
-build and, once the SignPath variables are set, submits the exe and the installer for signing.
-Each request waits for manual approval in SignPath.
-
-Until that is live, publish the unsigned files `release.ps1` builds. Open item: `release.ps1`
-cannot yet take the CI-signed exe and installer as input, so the first signed release needs
-that added first (the hashes, SBOM and minisign signatures are still made here, because the
-minisign key never leaves this PC).
+SignPath Foundation declined the project in Nov 2026 (not enough public visibility yet). The
+Microsoft Store build is signed by Microsoft and shows no warning (`packaging/msix/README.md`).
+For the installer, publish the unsigned files `release.ps1` builds. The SignPath steps in
+`.github/workflows/release-build.yml` stay dormant until its variables are set; if a
+certificate is added later, `release.ps1` still needs a way to take CI-signed files as input
+(the hashes, SBOM and minisign signatures are made here, because the minisign key never
+leaves this PC).
 
 `release.ps1` also has `-Sign signpath` and `-Sign signtool -CertThumbprint <sha1>`. They sign
 a local build, which the policy above rules out for public releases; use them only for testing
@@ -223,9 +219,7 @@ text change, and changes nothing. The second does it:
 - copies the staged clips and crops from `media-staging\` to `site/video/` and `site/img/` and
   writes `media.json`. It stops before changing anything unless they were rendered from the
   commit the manifest names (`-SkipMedia` leaves the old media; `check_site.py` then fails)
-- rewrites the version, file names, file size and SHA-256 in `site/index.html`, and the
-  "Releases up to X are not code-signed" line in `site/code-signing/index.html` (pass
-  `-KeepSigningStatus` for the first signed release and edit that page by hand)
+- rewrites the version, file names, file size and SHA-256 in `site/index.html`
 - copies `stinkshot-release.json` and its `.minisig` to `site/release/`
 - verifies that every hash in the copied `SHA256SUMS` and manifest matches the copied files
   and that the hash shown on the page is the installer's

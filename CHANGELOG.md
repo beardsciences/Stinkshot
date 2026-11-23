@@ -9,6 +9,8 @@ write entries for people who use Stinkshot, not for people who read the diff.
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-11-23
+
 ### Added
 
 - Region After Delay: waits a few seconds (5 by default) before freezing the screen, so open
@@ -253,7 +255,8 @@ Tagged in the repository; no downloads were published.
 - No upload targets, accounts or telemetry. The update check is the only network request and
   is off by default.
 
-[Unreleased]: https://code.mccullough.dev/christian/stinkshot/compare/v0.1.5...main
+[Unreleased]: https://code.mccullough.dev/christian/stinkshot/compare/v0.1.6...main
+[0.1.6]: https://code.mccullough.dev/christian/stinkshot/compare/v0.1.5...v0.1.6
 [0.1.5]: https://code.mccullough.dev/christian/stinkshot/compare/v0.1.4...v0.1.5
 [0.1.4]: https://code.mccullough.dev/christian/stinkshot/compare/v0.1.3...v0.1.4
 [0.1.3]: https://code.mccullough.dev/christian/stinkshot/compare/v0.1.2...v0.1.3
