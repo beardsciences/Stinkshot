@@ -212,6 +212,50 @@ fn set_dwm_u32(hwnd: HWND, attr: windows::Win32::Graphics::Dwm::DWMWINDOWATTRIBU
     }
 }
 
+/// No Windows 11 frame on a borderless transparent window: no 1 px border and no rounded
+/// corners (which outline the window's whole rectangle around content drawn inside it).
+pub fn set_no_frame(hwnd: Hwnd) {
+    use windows::Win32::Graphics::Dwm::{DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE, DWMWCP_DONOTROUND};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GWL_STYLE, GetWindowLongPtrW, SWP_FRAMECHANGED, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE,
+        SWP_NOZORDER, WS_CAPTION, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUP, WS_SYSMENU,
+        WS_THICKFRAME,
+    };
+    let w = h(hwnd);
+    // winit keeps WS_CAPTION on undecorated windows (it hides the caption in
+    // WM_NCCALCSIZE), and DWM gives any captioned window a frame shadow. A plain popup
+    // gets none.
+    // SAFETY: plain window-style calls on a live window.
+    unsafe {
+        let style = GetWindowLongPtrW(w, GWL_STYLE) as u32;
+        let frame = (WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_THICKFRAME).0;
+        let new = (style & !frame) | WS_POPUP.0;
+        if new != style {
+            SetWindowLongPtrW(w, GWL_STYLE, new as isize);
+            let _ = SetWindowPos(
+                w,
+                None,
+                0,
+                0,
+                0,
+                0,
+                SWP_FRAMECHANGED
+                    | SWP_NOMOVE
+                    | SWP_NOSIZE
+                    | SWP_NOZORDER
+                    | SWP_NOOWNERZORDER
+                    | SWP_NOACTIVATE,
+            );
+        }
+    }
+    set_dwm_u32(w, DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE);
+    set_dwm_u32(
+        w,
+        DWMWA_WINDOW_CORNER_PREFERENCE,
+        DWMWCP_DONOTROUND.0 as u32,
+    );
+}
+
 /// Mica backdrop + immersive dark title bar + rounded corners (DWM attributes).
 pub fn apply_mica(hwnd: Hwnd, dark: bool) {
     let w = h(hwnd);

@@ -231,6 +231,20 @@ does it request repaints (every frame while animating). Even then it skips them:
 off, the orb is the still frame, the motes are static at 30% opacity, there are no
 trails, no bloom and no pulse, and repaints drop to every 2 s.
 
+### Recording countdown (`record_ui.rs`, Nov 24 2026)
+
+The countdown reuses the About loop through `logo_anim::orb_at` (same frames, disk cache
+and crossfade), drawn `VIEW` points square: one turn every 3 s, squashed on each second
+(`countdown_squash`: squash in 0.12 s, elastic spring back), a short pop on the digit and
+an ease-out-back entrance. Chosen by the user from a preview page of six styles
+(claude.ai/artifact/DAAJDT1H8eznwhoZe7Snvu) as "Bounce + Smooth Spin". Until a frame
+exists it falls back to the old dark disc. With animations off: the still frame, no
+squash. The window gets `window_util::set_no_frame`: winit keeps `WS_CAPTION` on
+undecorated windows, so DWM drew a rounded frame shadow around the whole box; turning
+non-client rendering off instead showed a basic-theme caption. Screen captures show the
+transparent window as white (DirectComposition content is not in the captured surface),
+so on-screen checks need a person.
+
 ### Measured
 
 These are debug builds in the worktree, on 12 cores at 1.25x display scaling. The About

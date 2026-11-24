@@ -559,6 +559,48 @@ pub fn show(ui: &mut Ui) {
     s.show_max_ms = s.show_max_ms.max(ms);
 }
 
+/// The orb at loop position `phase` (0..1, one spin plus one lump cycle), crossfaded like
+/// the About page, for other surfaces (the recording countdown). Uses the same frames and
+/// disk cache: starts loading or rendering them if needed and keeps them alive while
+/// called. Draw the texture `VIEW` points square. None until a frame exists (callers draw
+/// something else meanwhile); with Windows animations off it is the still frame.
+pub fn orb_at(ctx: &egui::Context, phase: f64) -> Option<egui::TextureId> {
+    let h = handle(ctx);
+    let mut a = h.lock().ok()?;
+    a.last_wanted = Instant::now();
+    a.last_shown = Some(Instant::now());
+    if !a.reaper {
+        a.reaper = true;
+        spawn_reaper(h.clone());
+    }
+    if a.reduced_at
+        .is_none_or(|t| t.elapsed() > Duration::from_secs(2))
+    {
+        a.reduced = !client_area_animation();
+        a.reduced_at = Some(Instant::now());
+    }
+    let reduced = a.reduced;
+    let (size, ss) = frame_size(ctx.pixels_per_point());
+    a.ensure_worker(ctx, size, ss, !reduced, true);
+    let f = phase.rem_euclid(1.0) * FRAMES as f64;
+    let (i, step) = if reduced {
+        (STILL, 0)
+    } else {
+        (
+            f.floor() as usize % FRAMES,
+            ((f - f.floor()) * BLEND_STEPS).floor() as u32,
+        )
+    };
+    a.ctl.hint.store(i, Ordering::Relaxed);
+    a.ctl.visible.store(true, Ordering::Relaxed);
+    a.texture(ctx, i, step)
+}
+
+/// Windows "Show animations" is on (the countdown bounces only then).
+pub fn animations_on() -> bool {
+    client_area_animation()
+}
+
 impl Anim {
     /// Starts the worker unless one already covers `size`/`ss` (and the whole loop when
     /// `want_loop`). A new size (DPI change) starts over; asking for the loop after only

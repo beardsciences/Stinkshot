@@ -1,5 +1,5 @@
 //! Recording and scrolling HUDs (docs/design/Recording.dc.html, Pin.dc.html):
-//! - `Countdown`: big 3-2-1 circle centered on the region; the shell polls `finished()`;
+//! - `Countdown`: the spinning logo (the About loop, one turn per 3 s) squashing on each second with the digit on it, centered on the region (a plain 3-2-1 disc until the logo frames exist); the shell polls `finished()`;
 //!   Esc cancels (pushes `Command::RecordCancel`).
 //! - `RecordFrame`: dashed red border around the region, click-through, excluded from capture.
 //! - `RecordHud`: bar under (or above, if no room) the region: red dot, elapsed, pause/resume,
@@ -57,6 +57,37 @@ pub fn countdown_number(total_secs: u32, elapsed: Duration) -> u32 {
 /// 0..1 progress through the current countdown second (for the pulse ring).
 pub fn countdown_phase(elapsed: Duration) -> f32 {
     elapsed.subsec_nanos() as f32 / 1_000_000_000.0
+}
+
+/// Squash of the countdown orb at `phase` (0..1) of a second: 0 at rest, 1 fully squashed.
+/// It squashes in the first 0.12 s of each second, then springs back with an elastic
+/// overshoot (negative values stretch it a little).
+pub fn countdown_squash(phase: f32) -> f32 {
+    if phase < 0.12 {
+        phase / 0.12
+    } else {
+        1.0 - ease_out_elastic(((phase - 0.12) / 0.7).clamp(0.0, 1.0))
+    }
+}
+
+fn ease_out_elastic(t: f32) -> f32 {
+    if t <= 0.0 {
+        return 0.0;
+    }
+    if t >= 1.0 {
+        return 1.0;
+    }
+    let c4 = std::f32::consts::TAU / 3.0;
+    2f32.powf(-10.0 * t) * ((t * 10.0 - 0.75) * c4).sin() + 1.0
+}
+
+fn ease_out_back(t: f32) -> f32 {
+    let (c1, t) = (1.70158, t.clamp(0.0, 1.0) - 1.0);
+    1.0 + (c1 + 1.0) * t * t * t + c1 * t * t
+}
+
+fn ease_out_cubic(t: f32) -> f32 {
+    1.0 - (1.0 - t.clamp(0.0, 1.0)).powi(3)
 }
 
 /// Scroll HUD progress bar: stitched height against the configured maximum.
@@ -222,6 +253,7 @@ impl Surface for Countdown {
 
     fn on_created(&mut self, hwnd: Hwnd, _shared: &Shared) {
         uc::apply_hud_style(hwnd, self.rect, true, true);
+        stinkshot_platform::window_util::set_no_frame(hwnd);
     }
 
     fn show(&mut self, ctx: &egui::Context, shared: &mut Shared) -> SurfaceStatus {
@@ -241,8 +273,62 @@ impl Surface for Countdown {
         let elapsed = self.start.elapsed();
         let n = countdown_number(self.seconds, elapsed);
         let phase = countdown_phase(elapsed);
-        let p = uc::pal(shared);
         let accent = uc::accent(shared);
+        // The logo, turning once every 3 s and squashing on each second (docs/notes/logo.md).
+        let secs = elapsed.as_secs_f64();
+        let orb = crate::logo_anim::orb_at(ctx, ORB_START + secs / ORB_TURN_S);
+        if let Some(tex) = orb {
+            uc::root_ui(ctx, Color32::TRANSPARENT, |ui, rect| {
+                let center = pos2(rect.center().x, rect.top() + 100.0);
+                let painter = ui.painter();
+                let moving = crate::logo_anim::animations_on();
+                let (k, enter) = if moving {
+                    let t = elapsed.as_secs_f32();
+                    (
+                        countdown_squash(phase),
+                        if t < 0.25 {
+                            ease_out_back(t / 0.25)
+                        } else {
+                            1.0
+                        },
+                    )
+                } else {
+                    (0.0, 1.0)
+                };
+                let view = crate::logo_anim::VIEW;
+                let size = vec2(view * (1.0 + 0.16 * k), view * (1.0 - 0.14 * k)) * enter;
+                let orb_rect = Rect::from_center_size(center + vec2(0.0, view * 0.06 * k), size);
+                let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+                painter.image(tex, orb_rect, uv, Color32::WHITE);
+                // A short pop of the digit as each second starts.
+                let pulse = if moving {
+                    1.0 + 0.1 * (1.0 - ease_out_cubic(phase / 0.35))
+                } else {
+                    1.0
+                };
+                let font = theme::semibold(64.0 * enter * pulse);
+                let at = center + vec2(0.0, 4.0);
+                for (off, alpha) in [(vec2(0.0, 3.0), 70u8), (vec2(0.0, 1.5), 90)] {
+                    painter.text(
+                        at + off,
+                        Align2::CENTER_CENTER,
+                        n.to_string(),
+                        font.clone(),
+                        Color32::from_black_alpha(alpha),
+                    );
+                }
+                painter.text(
+                    at,
+                    Align2::CENTER_CENTER,
+                    n.to_string(),
+                    font,
+                    Color32::WHITE,
+                );
+                cancel_hint(ui, rect);
+            });
+            return SurfaceStatus::Open;
+        }
+        // No logo frames yet (first start, still rendering): the plain disc.
         uc::root_ui(ctx, Color32::TRANSPARENT, |ui, rect| {
             let center = pos2(rect.center().x, rect.top() + 100.0);
             let painter = ui.painter();
@@ -266,16 +352,29 @@ impl Surface for Countdown {
                 theme::semibold(84.0),
                 Color32::WHITE,
             );
-            painter.text(
-                pos2(rect.center().x, rect.bottom() - 14.0),
-                Align2::CENTER_CENTER,
-                tr!("shell.countdown.cancel"),
-                uc::font(12.0),
-                p.text_secondary,
-            );
+            cancel_hint(ui, rect);
         });
         SurfaceStatus::Open
     }
+}
+
+/// Where the countdown's logo loop starts (the About page's still pose) and how long one
+/// turn takes.
+const ORB_START: f64 = 6.0 / crate::logo_anim::FRAMES as f64;
+const ORB_TURN_S: f64 = 3.0;
+
+/// "Esc to Cancel" on a dark pill at the bottom of the countdown window, readable over any
+/// content.
+fn cancel_hint(ui: &Ui, rect: Rect) {
+    let painter = ui.painter();
+    let text = tr!("shell.countdown.cancel");
+    let galley = painter.layout_no_wrap(text.to_owned(), uc::font(12.0), Color32::from_gray(233));
+    let pill = Rect::from_center_size(
+        pos2(rect.center().x, rect.bottom() - 14.0),
+        galley.size() + vec2(18.0, 8.0),
+    );
+    painter.rect_filled(pill, pill.height() / 2.0, Color32::from_black_alpha(170));
+    painter.galley(pill.center() - galley.size() / 2.0, galley, Color32::WHITE);
 }
 
 // ---------------------------------------------------------------------------------------
@@ -1774,6 +1873,14 @@ mod tests {
         assert_eq!(countdown_number(3, d(3000)), 0);
         assert_eq!(countdown_number(3, d(9000)), 0);
         assert_eq!(countdown_number(0, d(0)), 0);
+    }
+
+    #[test]
+    fn countdown_squash_hits_rest_and_peak() {
+        assert_eq!(countdown_squash(0.0), 0.0);
+        assert!((countdown_squash(0.12) - 1.0).abs() < 1e-3);
+        assert!(countdown_squash(0.82).abs() < 1e-3);
+        assert!(countdown_squash(0.99).abs() < 1e-3);
     }
 
     #[test]

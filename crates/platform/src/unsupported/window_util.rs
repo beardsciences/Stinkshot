@@ -35,6 +35,9 @@ pub fn exclude_from_capture_always(_hwnd: Hwnd) {}
 pub fn set_hollow_region(_hwnd: Hwnd, _border: i32) {}
 
 /// Does nothing on this OS yet.
+pub fn set_no_frame(_hwnd: Hwnd) {}
+
+/// Does nothing on this OS yet.
 pub fn apply_mica(_hwnd: Hwnd, _dark: bool) {}
 
 /// Does nothing on this OS yet.
