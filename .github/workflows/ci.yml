@@ -103,11 +103,9 @@ jobs:
           RUST_BACKTRACE: '1'
         run: xvfb-run -a -s '-screen 0 1920x1080x24' target/debug/stinkshot --smoke-test
 
-      # macOS runners have a logged-in window server and a paravirtual Metal device, so this
-      # should work, but it has not run yet: not required until it has passed once.
+      # macOS runners have a logged-in window server and a paravirtual Metal device.
       - name: Smoke test (macOS)
         if: runner.os == 'macOS'
-        continue-on-error: true
         timeout-minutes: 5
         env:
           RUST_BACKTRACE: '1'

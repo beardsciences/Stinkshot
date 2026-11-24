@@ -98,8 +98,8 @@ single-instance lock, IPC, tray, hotkeys, PrintScreen takeover, autostart, captu
 and background workers, so it never touches an installed instance and is safe to run
 locally from a debug build.
 
-CI runs it on Linux under `xvfb-run` with lavapipe (`WGPU_BACKEND=vulkan`). The macOS step
-is `continue-on-error` until it has passed once.
+CI runs it on Linux under `xvfb-run` with lavapipe (`WGPU_BACKEND=vulkan`) and on macOS
+with Metal. Both steps are required.
 
 ## What the stand-ins do at run time
 
