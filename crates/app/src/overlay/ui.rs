@@ -1201,6 +1201,9 @@ pub fn size_chips(
         });
 }
 
+/// A `hint_bar` key that shows the logo spinner instead of a key (a wait, like Reading Text).
+pub const LOADING: &str = "\u{1}";
+
 /// Top-center hint bar; `items` are (key, action) pairs with the key emphasised.
 pub fn hint_bar(
     ctx: &Context,
@@ -1235,11 +1238,16 @@ pub fn hint_bar(
                         for (k, v) in items {
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 4.0;
-                                ui.label(
-                                    RichText::new(*k)
-                                        .font(theme::semibold(12.0))
-                                        .color(pal.text),
-                                );
+                                if *k == LOADING {
+                                    ui.spacing_mut().item_spacing.x = 6.0;
+                                    crate::logo_anim::spinner(ui, 15.0);
+                                } else {
+                                    ui.label(
+                                        RichText::new(*k)
+                                            .font(theme::semibold(12.0))
+                                            .color(pal.text),
+                                    );
+                                }
                                 ui.label(RichText::new(*v).size(12.0).color(pal.text_secondary));
                             });
                         }

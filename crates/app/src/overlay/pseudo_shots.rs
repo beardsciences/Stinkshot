@@ -192,15 +192,7 @@ fn scenes() -> Vec<(&'static str, Vec2, Scene)> {
                     copied: None,
                     ocr: true,
                 };
-                super::scan::panel(
-                    ctx,
-                    at,
-                    Align2::LEFT_TOP,
-                    &view,
-                    pal(),
-                    accent,
-                    &mut Vec::new(),
-                );
+                super::scan::panel(ctx, at, Align2::LEFT_TOP, &view, pal(), &mut Vec::new());
             }),
         ),
         (

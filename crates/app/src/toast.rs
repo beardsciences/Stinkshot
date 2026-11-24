@@ -251,6 +251,8 @@ pub struct Toast {
     texture: Option<egui::TextureHandle>,
     /// When the window was created; drives the slide-in. `None` once it has settled.
     entering: Option<Instant>,
+    /// When the toast was made; drives the logo's squash as a capture lands.
+    born: Instant,
 }
 
 impl Toast {
@@ -268,6 +270,7 @@ impl Toast {
             last_tick: Instant::now(),
             texture: None,
             entering: None,
+            born: Instant::now(),
         };
         t.rect = t.compute_rect();
         t
@@ -383,6 +386,11 @@ impl Surface for Toast {
 
         let p = uc::pal(shared);
         let accent = uc::accent(shared);
+        let born = self.born;
+        let landed = matches!(
+            self.kind,
+            ToastKind::Capture { .. } | ToastKind::Recording { .. }
+        );
         let tex = self.thumb_texture(ctx);
         let (tw, th) = self.texture_dims();
         let actions = actions_for(&self.kind);
@@ -549,13 +557,34 @@ impl Surface for Toast {
             if error {
                 painter.rect_filled(sq, CornerRadius::same(7), p.danger);
             } else {
-                let tex = logo_texture(ui.ctx(), accent);
-                painter.image(
-                    tex.id(),
-                    sq.expand(1.0),
-                    Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
-                    Color32::WHITE,
-                );
+                let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+                // A capture landing: one squash and a quarter turn of the logo (the green orb,
+                // so only with the default accent; other accents keep their tinted logo).
+                let t = born.elapsed().as_secs_f32();
+                let orb = if landed
+                    && accent == theme::DEFAULT_ACCENT
+                    && crate::logo_anim::animations_on()
+                {
+                    let (k, turn) = landing_bounce(t);
+                    let px = (18.0 * ui.ctx().pixels_per_point()).round() as u32;
+                    crate::logo_anim::small_orb(ui.ctx(), LOGO_START + turn as f64, px)
+                        .map(|id| (id, k))
+                } else {
+                    None
+                };
+                if let Some((id, k)) = orb {
+                    let r = Rect::from_center_size(
+                        sq.center() + vec2(0.0, 2.0 * k),
+                        vec2(16.0 * (1.0 + 0.2 * k), 16.0 * (1.0 - 0.18 * k)),
+                    );
+                    painter.image(id, r, uv, Color32::WHITE);
+                    if t < LANDING_S {
+                        ui.ctx().request_repaint();
+                    }
+                } else {
+                    let tex = logo_texture(ui.ctx(), accent);
+                    painter.image(tex.id(), sq.expand(1.0), uv, Color32::WHITE);
+                }
             }
             painter.text(
                 pos2(text_x + 20.0, top + 8.0),
@@ -639,6 +668,30 @@ impl Surface for Toast {
             SurfaceStatus::Open
         }
     }
+}
+
+/// Where the toast's orb sits in the logo loop at rest (the About page's still pose), and how
+/// long its landing bounce lasts.
+const LOGO_START: f64 = 6.0 / crate::logo_anim::FRAMES as f64;
+const LANDING_S: f32 = 1.0;
+
+/// The logo's landing bounce at `t` seconds after the toast appeared: (squash 0..1, turns).
+/// Starts as the slide-in settles; a quarter turn with a squash that springs back.
+fn landing_bounce(t: f32) -> (f32, f32) {
+    let p = ((t - 0.2) / 0.7).clamp(0.0, 1.0);
+    let k = if p < 0.15 {
+        p / 0.15
+    } else {
+        let q = (p - 0.15) / 0.85;
+        // Elastic ease-out, as in the countdown.
+        let e = if q >= 1.0 {
+            1.0
+        } else {
+            2f32.powf(-10.0 * q) * ((q * 10.0 - 0.75) * std::f32::consts::TAU / 3.0).sin() + 1.0
+        };
+        1.0 - e
+    };
+    (k, 0.25 * (1.0 - (1.0 - p).powi(3)))
 }
 
 /// The logo in the accent color, for the toast header. Rebuilt when the accent changes.

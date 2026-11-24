@@ -447,7 +447,7 @@ pub fn panel(
                 .show(ui, |ui| match view {
                     PanelView::Scanning => {
                         ui.horizontal(|ui| {
-                            ui.add(egui::Spinner::new().size(16.0).color(accent));
+                            crate::logo_anim::spinner(ui, 16.0);
                             ui.label(
                                 RichText::new(tr!("overlay.redact.finding"))
                                     .size(13.0)

@@ -118,9 +118,36 @@ fn detail_rows(step: Step, cfg: &Config) -> Vec<(String, String)> {
     }
 }
 
+/// The tour logo's entrance at `t` seconds: (scale, squash). Pops in with an overshoot over
+/// 0.45 s, then one squash that springs back.
+fn logo_entrance(t: f32) -> (f32, f32) {
+    let ease_out_back = |x: f32| {
+        let (c, x) = (1.70158, x.clamp(0.0, 1.0) - 1.0);
+        1.0 + (c + 1.0) * x * x * x + c * x * x
+    };
+    let scale = ease_out_back(t / 0.45);
+    let p = ((t - 0.45) / 0.9).clamp(0.0, 1.0);
+    let k = if t < 0.45 {
+        0.0
+    } else if p < 0.12 {
+        p / 0.12
+    } else {
+        let q = (p - 0.12) / 0.88;
+        let e = if q >= 1.0 {
+            1.0
+        } else {
+            2f32.powf(-10.0 * q) * ((q * 10.0 - 0.75) * std::f32::consts::TAU / 3.0).sin() + 1.0
+        };
+        1.0 - e
+    };
+    (scale, k)
+}
+
 pub struct TourWindow {
     step: usize,
     done: bool,
+    /// First frame shown: the logo's bounce-in on the first step.
+    shown: Option<std::time::Instant>,
 }
 
 impl TourWindow {
@@ -128,6 +155,7 @@ impl TourWindow {
         Self {
             step: 0,
             done: false,
+            shown: None,
         }
     }
 
@@ -137,6 +165,7 @@ impl TourWindow {
         Self {
             step: step.min(STEPS.len() - 1),
             done: false,
+            shown: None,
         }
     }
 
@@ -178,6 +207,13 @@ impl Surface for TourWindow {
             back = true;
         }
 
+        // The bounce starts once the logo is ready (a cold cache renders it first).
+        let logo_ready = self.step == 0 && crate::logo_anim::orb_at(ctx, 0.0).is_some();
+        let shown = if logo_ready {
+            *self.shown.get_or_insert_with(std::time::Instant::now)
+        } else {
+            std::time::Instant::now()
+        };
         uc::root_ui(ctx, p.bg, |ui, rect| {
             let area = rect.shrink2(vec2(32.0, 28.0));
             // Step dots, top right.
@@ -193,12 +229,42 @@ impl Surface for TourWindow {
                 };
                 ui.painter().circle_filled(c, 4.0, col);
             }
-            widgets::paint_icon(
-                ui.painter(),
-                egui::Rect::from_min_size(area.min, vec2(36.0, 36.0)),
-                step.icon(),
-                accent,
-            );
+            // First step: the logo bounces in where the step icon goes, then turns slowly.
+            let t = shown.elapsed().as_secs_f32();
+            let orb = (self.step == 0)
+                .then(|| {
+                    crate::logo_anim::orb_at(
+                        ui.ctx(),
+                        6.0 / crate::logo_anim::FRAMES as f64 + t as f64 / 12.0,
+                    )
+                })
+                .flatten();
+            if let Some(tex) = orb {
+                let (scale, k) = if crate::logo_anim::animations_on() {
+                    logo_entrance(t)
+                } else {
+                    (1.0, 0.0)
+                };
+                let side = 64.0 * scale;
+                let c = area.min + vec2(18.0, 16.0 + 3.0 * k);
+                ui.painter().image(
+                    tex,
+                    egui::Rect::from_center_size(
+                        c,
+                        vec2(side * (1.0 + 0.16 * k), side * (1.0 - 0.14 * k)),
+                    ),
+                    egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                    egui::Color32::WHITE,
+                );
+                ui.ctx().request_repaint_after(Duration::from_millis(16));
+            } else {
+                widgets::paint_icon(
+                    ui.painter(),
+                    egui::Rect::from_min_size(area.min, vec2(36.0, 36.0)),
+                    step.icon(),
+                    accent,
+                );
+            }
             let content = egui::Rect::from_min_max(area.min + vec2(0.0, 52.0), area.max);
             ui.scope_builder(UiBuilder::new().max_rect(content), |ui| {
                 ui.spacing_mut().item_spacing.y = 8.0;

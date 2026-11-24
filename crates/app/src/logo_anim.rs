@@ -203,7 +203,9 @@ struct Anim {
     started_for: Option<(u32, u32, bool)>,
     /// The orb texture and what it holds: (frame a, frame b, blend step, versions).
     tex: Option<TextureHandle>,
-    tex_key: Option<(usize, usize, u32, u32, u32)>,
+    tex_key: Option<ImgKey>,
+    /// The image in `tex` (small orbs are shrunk from it).
+    tex_image: Option<Arc<ColorImage>>,
     phase: f64,
     rate: f64,
     last_time: Option<f64>,
@@ -232,6 +234,7 @@ impl Default for Anim {
             started_for: None,
             tex: None,
             tex_key: None,
+            tex_image: None,
             hidden: false,
             hidden_at: None,
             phase: STILL as f64 / FRAMES as f64,
@@ -250,6 +253,9 @@ impl Default for Anim {
 }
 
 type Handle = Arc<Mutex<Anim>>;
+
+/// What the orb texture shows: (frame a, frame b, blend step, versions of a and b).
+type ImgKey = (usize, usize, u32, u32, u32);
 
 fn handle(ctx: &egui::Context) -> Handle {
     ctx.data_mut(|d| {
@@ -596,6 +602,121 @@ pub fn orb_at(ctx: &egui::Context, phase: f64) -> Option<egui::TextureId> {
     a.texture(ctx, i, step)
 }
 
+/// Part of the `VIEW` square the orb fills (the rest is room for the About page's bloom);
+/// small orbs crop to it.
+const ORB_FILL: f32 = 0.86;
+
+/// The orb at loop position `phase` shrunk to `px` pixels square on the CPU (egui-wgpu has
+/// no mipmaps, so a big frame drawn tiny shimmers), cropped to the orb. For loaders and the
+/// toast. None until a frame exists.
+pub fn small_orb(ctx: &egui::Context, phase: f64, px: u32) -> Option<egui::TextureId> {
+    let px = px.clamp(8, 128);
+    // Starts the frames and keeps them alive, like `orb_at`.
+    orb_at(ctx, phase)?;
+    let h = handle(ctx);
+    let a = h.lock().ok()?;
+    let src = a.tex_image.clone()?;
+    let key = (a.tex_key?, px);
+    let id = egui::Id::unique("small-orb").with(px);
+    if let Some((k, t)) = ctx.data(|d| d.get_temp::<((ImgKey, u32), TextureHandle)>(id))
+        && k == key
+    {
+        return Some(t.id());
+    }
+    drop(a);
+    let img = shrink(&src, ORB_FILL, px as usize);
+    let tex = match ctx.data(|d| d.get_temp::<((ImgKey, u32), TextureHandle)>(id)) {
+        Some((_, mut t)) => {
+            t.set(img, TextureOptions::LINEAR);
+            t
+        }
+        None => ctx.load_texture("small-orb", img, TextureOptions::LINEAR),
+    };
+    let tid = tex.id();
+    ctx.data_mut(|d| d.insert_temp(id, (key, tex)));
+    Some(tid)
+}
+
+/// The centre `fill` of `src` box-filtered down to `px` square (premultiplied, so a plain
+/// average is correct).
+fn shrink(src: &ColorImage, fill: f32, px: usize) -> ColorImage {
+    let [w, h] = src.size;
+    let side = (w.min(h) as f32 * fill).round().max(1.0);
+    let x0 = (w as f32 - side) / 2.0;
+    let y0 = (h as f32 - side) / 2.0;
+    let step = side / px as f32;
+    let mut out = Vec::with_capacity(px * px);
+    for oy in 0..px {
+        let sy0 = (y0 + oy as f32 * step) as usize;
+        let sy1 = ((y0 + (oy + 1) as f32 * step).ceil() as usize).clamp(sy0 + 1, h);
+        for ox in 0..px {
+            let sx0 = (x0 + ox as f32 * step) as usize;
+            let sx1 = ((x0 + (ox + 1) as f32 * step).ceil() as usize).clamp(sx0 + 1, w);
+            let mut acc = [0u32; 4];
+            let mut n = 0u32;
+            for y in sy0..sy1 {
+                for c in &src.pixels[y * w + sx0..y * w + sx1] {
+                    acc[0] += c.r() as u32;
+                    acc[1] += c.g() as u32;
+                    acc[2] += c.b() as u32;
+                    acc[3] += c.a() as u32;
+                    n += 1;
+                }
+            }
+            let n = n.max(1);
+            out.push(Color32::from_rgba_premultiplied(
+                ((acc[0] + n / 2) / n) as u8,
+                ((acc[1] + n / 2) / n) as u8,
+                ((acc[2] + n / 2) / n) as u8,
+                ((acc[3] + n / 2) / n) as u8,
+            ));
+        }
+    }
+    ColorImage::new([px, px], out)
+}
+
+/// A spinner made of the logo, turning once per `LOADER_TURN_S`: a drop-in for
+/// `egui::Spinner` (falls back to it until the logo frames exist). `size` in points.
+pub fn spinner(ui: &mut Ui, size: f32) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(vec2(size, size), Sense::hover());
+    if !ui.is_rect_visible(rect) {
+        return resp;
+    }
+    let ctx = ui.ctx().clone();
+    let t = ui.input(|i| i.time);
+    let px = (size * ctx.pixels_per_point()).round() as u32;
+    match small_orb(&ctx, STILL as f64 / FRAMES as f64 + t / LOADER_TURN_S, px) {
+        Some(tex) => {
+            let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+            ui.painter().image(tex, rect, uv, Color32::WHITE);
+        }
+        None => {
+            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+            child.add(egui::Spinner::new().size(size));
+        }
+    }
+    ui.ctx().request_repaint();
+    resp
+}
+
+/// The logo spinner painted into `rect` (square) without a layout slot, for hand-placed
+/// HUDs. False (nothing painted) until the logo frames exist.
+pub fn paint_spinner(painter: &egui::Painter, rect: Rect) -> bool {
+    let ctx = painter.ctx().clone();
+    let t = ctx.input(|i| i.time);
+    let px = (rect.width() * ctx.pixels_per_point()).round() as u32;
+    let Some(tex) = small_orb(&ctx, STILL as f64 / FRAMES as f64 + t / LOADER_TURN_S, px) else {
+        return false;
+    };
+    let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+    painter.image(tex, rect, uv, Color32::WHITE);
+    ctx.request_repaint();
+    true
+}
+
+/// Seconds per turn of the logo spinner.
+const LOADER_TURN_S: f64 = 1.2;
+
 /// Windows "Show animations" is on (the countdown bounces only then).
 pub fn animations_on() -> bool {
     client_area_animation()
@@ -690,6 +811,7 @@ impl Anim {
             Some(b) => Arc::new(blend(&a, &b, step as f32 / BLEND_STEPS as f32)),
             None => a,
         };
+        self.tex_image = Some(img.clone());
         match &mut self.tex {
             Some(t) => t.set(img, TextureOptions::LINEAR),
             None => self.tex = Some(ctx.load_texture("about-logo", img, TextureOptions::LINEAR)),

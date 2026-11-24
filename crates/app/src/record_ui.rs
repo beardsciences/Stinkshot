@@ -1470,7 +1470,20 @@ impl Surface for TrimWindow {
                 p.text_tertiary,
             );
 
-            // Status / progress row.
+            // Status / progress row, with the logo spinner in front while saving.
+            let status_row = if busy {
+                let spin = Rect::from_center_size(
+                    status_row.left_center() + vec2(9.0, 0.0),
+                    vec2(18.0, 18.0),
+                );
+                if crate::logo_anim::paint_spinner(&painter, spin) {
+                    Rect::from_min_max(status_row.min + vec2(26.0, 0.0), status_row.max)
+                } else {
+                    status_row
+                }
+            } else {
+                status_row
+            };
             if let Some(pr) = progress {
                 let bar = Rect::from_min_size(
                     status_row.left_center() + vec2(0.0, -2.0),
@@ -1778,8 +1791,14 @@ impl Surface for ScrollHud {
             );
             let inner = rect.shrink(12.0);
             let painter = ui.painter().clone();
+            let spin = Rect::from_min_size(inner.left_top() + vec2(0.0, -1.0), vec2(18.0, 18.0));
+            let text_x = if crate::logo_anim::paint_spinner(&painter, spin) {
+                24.0
+            } else {
+                0.0
+            };
             painter.text(
-                inner.left_top(),
+                inner.left_top() + vec2(text_x, 0.0),
                 Align2::LEFT_TOP,
                 tr!("shell.scroll.stitching", n = frames),
                 uc::font(13.0),

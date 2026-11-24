@@ -940,7 +940,10 @@ impl Overlay {
         }
         if self.select_text_active() {
             if self.select_text_reading() {
-                return vec![("", tr!("overlay.select_text.reading")), help];
+                return vec![
+                    (super::ui::LOADING, tr!("overlay.select_text.reading")),
+                    help,
+                ];
             }
             return vec![
                 (drag, tr!("overlay.hint.select_words")),
@@ -1411,7 +1414,7 @@ impl Overlay {
             if let Some(view) = self.scan_view(shared.ocr.is_some()) {
                 let (pos, pivot) = place(scan::panel_height(&view), 350.0);
                 let mut scan_actions = Vec::new();
-                scan::panel(ctx, pos, pivot, &view, pal, accent, &mut scan_actions);
+                scan::panel(ctx, pos, pivot, &view, pal, &mut scan_actions);
                 actions.extend(scan_actions.into_iter().map(UiAction::Scan));
                 if matches!(
                     view,

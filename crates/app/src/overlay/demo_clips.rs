@@ -1259,6 +1259,80 @@ fn demo_clips() {
         shot("stills-toast", tw, th, &mut shared, steps, &mut toast);
     }
 
+    if want("moments") {
+        // The animated logo in other places (Nov 24 2026 review): empty History, the tour's
+        // first card, a capture toast landing, a loader (scrolling capture HUD). Dark theme.
+        let clip = |name: &'static str,
+                    w: u32,
+                    h: u32,
+                    lead: f32,
+                    secs: f32,
+                    shared: &mut Shared,
+                    surface: &mut dyn crate::state::Surface| {
+            let mut r = Rig::new(&setup.device, &setup.queue, sz(w), sz(h));
+            run_clip(
+                &mut r,
+                shared,
+                &dir.join(format!("{name}.mkv")),
+                (-200.0, -200.0),
+                &[Step::Wait(lead), Step::Record, Step::Wait(secs)],
+                |ctx, sh| {
+                    let _ = surface.show(ctx, sh);
+                },
+            );
+        };
+        let mut shared = shared_for(&empty_history, fonts.clone());
+        shared.dark = true;
+        shared.config = Config::default();
+        let mut hw = crate::history_ui::HistoryWindow::new(&shared);
+        clip("moment-history", 1200, 760, 1.5, 4.0, &mut shared, &mut hw);
+        let mut tour = crate::tour::TourWindow::new();
+        clip("moment-tour", 840, 600, 0.0, 3.5, &mut shared, &mut tour);
+        let thumb_path = dir.join("history").join(
+            std::fs::read_dir(dir.join("history"))
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .map(|e| e.file_name())
+                .find(|n| n.to_string_lossy().ends_with(".png"))
+                .unwrap(),
+        );
+        let kind = || crate::toast::ToastKind::Capture {
+            thumb: load_rgba(&thumb_path),
+            title: "Copied to Clipboard".into(),
+            body: "1600 x 1000, saved to History".into(),
+            item: Some(1),
+            can_edit: true,
+        };
+        let size = crate::toast::logical_size(&kind());
+        // The logo frames load first (each clip has its own context), then the toast is made,
+        // so its landing bounce is in the recording.
+        let mut toast: Option<crate::toast::Toast> = None;
+        let mut r = Rig::new(
+            &setup.device,
+            &setup.queue,
+            sz((size.x * PPP).round() as u32),
+            sz((size.y * PPP).round() as u32),
+        );
+        run_clip(
+            &mut r,
+            &mut shared,
+            &dir.join("moment-toast.mkv"),
+            (-200.0, -200.0),
+            &[Step::Wait(1.0), Step::Record, Step::Wait(2.5)],
+            |ctx, sh| {
+                if ctx.input(|i| i.time) < 1.0 {
+                    let _ = crate::logo_anim::orb_at(ctx, 0.0);
+                } else {
+                    let t = toast.get_or_insert_with(|| crate::toast::Toast::new(kind(), 7, 0));
+                    let _ = t.show(ctx, sh);
+                }
+            },
+        );
+        let mut hud = crate::record_ui::ScrollHud::new(PxRect::new(0, 0, 1280, 720));
+        hud.update(4, 1280, 3120);
+        clip("moment-loader", 450, 147, 1.0, 2.5, &mut shared, &mut hud);
+    }
+
     if want("site") {
         // Stills the website shows as pictures: History and two Settings pages, in both
         // themes, with default settings. The pointer starts off the canvas so it is not drawn.

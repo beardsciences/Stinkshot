@@ -279,7 +279,6 @@ pub fn panel(
     pivot: Align2,
     view: &ScanView,
     pal: &Palette,
-    accent: Color32,
     out: &mut Vec<ScanAction>,
 ) {
     Area::new(egui::Id::unique("stinkshot-ov-scan"))
@@ -290,7 +289,7 @@ pub fn panel(
             panels::panel_frame(pal).show(ui, |ui| match view {
                 ScanView::Scanning => {
                     ui.horizontal(|ui| {
-                        ui.add(egui::Spinner::new().size(16.0).color(accent));
+                        crate::logo_anim::spinner(ui, 16.0);
                         ui.label(
                             RichText::new(tr!("overlay.scan.reading"))
                                 .size(13.0)

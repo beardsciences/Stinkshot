@@ -2396,7 +2396,7 @@ impl SettingsWindow {
                 ui.set_width(ui.available_width());
                 ui.horizontal_wrapped(|ui| {
                     if checking {
-                        ui.add(egui::Spinner::new().size(14.0));
+                        crate::logo_anim::spinner(ui, 14.0);
                     }
                     ui.label(RichText::new(text).size(13.0).color(p.text));
                 });
@@ -2460,12 +2460,12 @@ impl SettingsWindow {
                     }
                 }
                 UpdateState::Downloading { percent, .. } => {
-                    ui.add(egui::Spinner::new().size(14.0));
+                    crate::logo_anim::spinner(ui, 14.0);
                     ui.label(tr!("settings.privacy.downloading", pct = percent));
                     ui.ctx().request_repaint_after(Duration::from_millis(250));
                 }
                 UpdateState::Installing { .. } => {
-                    ui.add(egui::Spinner::new().size(14.0));
+                    crate::logo_anim::spinner(ui, 14.0);
                     ui.label(tr!("settings.privacy.installing"));
                 }
                 UpdateState::None => {}

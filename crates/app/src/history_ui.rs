@@ -1484,18 +1484,49 @@ impl Surface for HistoryWindow {
                         tr!("history.nomatch.body").to_string(),
                     )
                 };
-                // Icon on a soft disc so the empty state has a focal point.
-                ui.painter().circle_filled(
-                    pos2(c.center().x, c.top() + 20.0),
-                    34.0,
-                    theme::subtle_fill(shared.dark, 1),
-                );
-                widgets::paint_icon(
-                    ui.painter(),
-                    Rect::from_center_size(pos2(c.center().x, c.top() + 20.0), vec2(36.0, 36.0)),
-                    icon,
-                    p.text_secondary,
-                );
+                // No captures at all: the logo turning slowly (one turn per 12 s, like the
+                // About page). No search results, or no logo frames yet: an icon on a soft
+                // disc, so the empty state still has a focal point.
+                let ctx = ui.ctx().clone();
+                let orb = total_empty
+                    .then(|| {
+                        let t = ctx.input(|i| i.time);
+                        crate::logo_anim::orb_at(
+                            &ctx,
+                            6.0 / crate::logo_anim::FRAMES as f64 + t / 12.0,
+                        )
+                    })
+                    .flatten();
+                if let Some(tex) = orb {
+                    let side = 92.0;
+                    ui.painter().image(
+                        tex,
+                        Rect::from_center_size(
+                            pos2(c.center().x, c.top() + 14.0),
+                            vec2(side, side),
+                        ),
+                        Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                        Color32::WHITE,
+                    );
+                    if crate::logo_anim::animations_on() {
+                        ctx.request_repaint_after(std::time::Duration::from_millis(33));
+                    }
+                } else {
+                    ui.painter().circle_filled(
+                        pos2(c.center().x, c.top() + 20.0),
+                        34.0,
+                        theme::subtle_fill(shared.dark, 1),
+                    );
+                    widgets::paint_icon(
+                        ui.painter(),
+                        Rect::from_center_size(
+                            pos2(c.center().x, c.top() + 20.0),
+                            vec2(36.0, 36.0),
+                        ),
+                        icon,
+                        p.text_secondary,
+                    );
+                }
                 ui.painter().text(
                     pos2(c.center().x, c.top() + 70.0),
                     Align2::CENTER_TOP,
