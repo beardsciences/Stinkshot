@@ -330,10 +330,10 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.about.report.open" => "Ver problemas",
         "settings.about.privacy" => "Privacidad",
         "settings.about.privacy.desc_store" => {
-            "Sin subidas, cuentas ni telemetría. Stinkshot no hace ninguna solicitud de red. Microsoft Store se encarga de las actualizaciones."
+            "Sin subidas, cuentas, telemetría ni solicitudes de red. Actualizaciones vía Microsoft Store."
         }
         "settings.about.privacy.desc" => {
-            "Sin subidas, cuentas ni telemetría. La única solicitud de red es la búsqueda opcional de actualizaciones."
+            "Sin subidas, cuentas ni telemetría. Solo busca actualizaciones si lo activas."
         }
         "settings.about.offline" => "Sin conexión por defecto",
         "settings.nav.help" => "Ayuda",
