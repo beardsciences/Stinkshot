@@ -692,6 +692,15 @@ impl Drop for KeepAwake {
     }
 }
 
+/// `DISK_RESERVE_BYTES`, or in a development profile (`STINKSHOT_PROFILE` set)
+/// `STINKSHOT_TEST_DISK_RESERVE_MB`, so a test can make a real volume count as nearly full.
+fn disk_reserve() -> u64 {
+    std::env::var_os("STINKSHOT_PROFILE")
+        .and_then(|_| std::env::var("STINKSHOT_TEST_DISK_RESERVE_MB").ok())
+        .and_then(|v| v.parse::<u64>().ok())
+        .map_or(DISK_RESERVE_BYTES, |mb| mb << 20)
+}
+
 /// Bytes the current user may still write on the volume holding `dir`.
 fn free_space(dir: &Path) -> Option<u64> {
     use std::os::windows::ffi::OsStrExt;
@@ -744,6 +753,7 @@ fn video_loop(
     let mut start_wall = Instant::now();
     let mut was_paused = false;
     let mut disk_checked = Instant::now();
+    let disk_reserve = disk_reserve();
 
     while !shared.stop.load(Ordering::Relaxed) {
         let now = Instant::now();
@@ -752,7 +762,7 @@ fn video_loop(
             disk_checked = now;
             // An unreadable volume (None) is left to the write errors.
             if let Some(free) = free_space(out_dir)
-                && free < DISK_RESERVE_BYTES
+                && free < disk_reserve
                 && !shared.low_disk.swap(true, Ordering::Relaxed)
             {
                 log::warn!(
